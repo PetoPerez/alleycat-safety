@@ -25,3 +25,6 @@
 - source_spec: `_bmad-output/implementation-artifacts/spec-race-administration-and-invitations.md`
   summary: Desactivar admins desde el superadmin, revocando sus sesiones, y logout.
   evidence: Hoy una cuenta admin no se puede retirar y una cookie robada vale 7 días; el humano lo dejó fuera de esta entrega en el Checkpoint 1.
+- source_spec: `_bmad-output/implementation-artifacts/spec-web-ui-race-administration.md`
+  summary: Test automatizado de que un clic en el mapa Leaflet cambia las coordenadas del checkpoint enviado.
+  evidence: Simular eventos de Leaflet en jsdom es costoso; hoy sólo lo cubre la prueba manual en Chrome.
