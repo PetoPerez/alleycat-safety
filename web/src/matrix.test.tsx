@@ -267,6 +267,22 @@ describe("matrix", () => {
     expect(rows[1].querySelector<HTMLInputElement>("input[readonly]")!.value).toBe("https://app/invite/new");
   });
 
+  it("Carrera terminada: invitar o reenviar muestra «La carrera ya terminó»", async () => {
+    const ended = {status: 422, body: {detail: "Race has already ended"}};
+    published(() => [inv(9, "sent")], {"POST /invitations/9/resend": ended, "POST /races/1/invitations": ended});
+    await render(<App />);
+    await click(button("Uno"));
+    await click(button("Reenviar"));
+    expect(text()).toContain("La carrera ya terminó.");
+    await cleanup();
+    published(() => [], {"POST /races/1/invitations": ended});
+    await render(<App />);
+    await click(button("Uno"));
+    await type(field("Corredor"), "5");
+    await submit(button("Invitar").closest("form")!);
+    expect(document.querySelector(".error")!.textContent).toContain("La carrera ya terminó.");
+  });
+
   it("Revocar: asks first, then the row shows Revocada without actions", async () => {
     let list = [inv(9, "sent")];
     const api = published(() => list, {"POST /invitations/9/revoke": () => { list = [inv(9, "revoked")]; return {body: {status: "revoked"}}; }});

@@ -310,20 +310,20 @@ def test_revoke_resend_and_reinvite(db):
     assert states[first["id"]] == "revoked" and states[replacement["id"]] == "revoked"
 
 
-def test_resend_keeps_the_original_expiry(db):
+def test_invitation_and_resend_expire_exactly_at_race_end(db):
     admin = new_admin(db, "keep-expiry@example.test")
     race = published_race(db, admin, "Keep expiry")
     rider = create_rider(RiderIn(name="Rider", phone="+5255"), admin, db)
+    # A client-sent duration is ignored: the organizer cannot choose it.
     first = invite(race.id, InviteIn(rider_id=rider.id, channel="whatsapp", expires_hours=5), admin, db)
     replacement = resend(first["id"], admin, db)
-    assert abs(replacement["expires_at"] - first["expires_at"]) <= timedelta(hours=1)
+    assert first["expires_at"] == replacement["expires_at"] == race.ends_at
 
 
 def test_reinvite_after_expiry_shows_expired_not_revoked(db):
     admin = new_admin(db, "expiry@example.test")
     race = published_race(db, admin, "Expiry")
     rider = create_rider(RiderIn(name="Rider", email="expiry-r@example.test"), admin, db)
-    assert status_of(invite, race.id, InviteIn(rider_id=rider.id, channel="email", expires_hours=0), admin, db).status_code == 422
     created = invite(race.id, InviteIn(rider_id=rider.id, channel="email"), admin, db)
     db.get(Invitation, created["id"]).expires_at = datetime(2000, 1, 1, tzinfo=UTC)
     db.commit()
@@ -378,7 +378,8 @@ def test_other_organizers_cannot_touch_races_riders_or_invitations(db):
 def clock(monkeypatch):
     """Sets "now" for every module that decides checkpoint visibility."""
     def set_now(when):
-        for target in ("app.models.utcnow", "app.routers.races.utcnow", "app.routers.invitations.utcnow"):
+        for target in ("app.models.utcnow", "app.routers.races.utcnow", "app.routers.invitations.utcnow",
+                       "app.services.invitations.utcnow"):
             monkeypatch.setattr(target, lambda: when)
     return set_now
 
@@ -481,3 +482,69 @@ def test_migration_0002_applies_with_default_for_existing_races(tmp_path):
     alembic("head")
     with sqlite3.connect(tmp_path / "migrate.db") as conn:
         assert conn.execute("select checkpoints_release_minutes, checkpoints_released_at from races").fetchall() == [(10, None)]
+
+
+# --- invitation expiry at race end --------------------------------------------
+
+def test_invitation_issued_20_days_early_works_through_release_and_race(db, clock):
+    admin = new_admin(db, "early@example.test")
+    race = published_race(db, admin, "Early")
+    clock(START - timedelta(days=20))
+    created, token = invited(db, admin, race)
+    assert created["expires_at"] == race.ends_at
+    for when in (START - timedelta(minutes=10), START, race.ends_at - timedelta(microseconds=1)):
+        clock(when)
+        assert [p["name"] for p in open_invite(token, db)["race"]["checkpoints"]] == ["A"]
+
+
+def test_first_open_during_race_shows_summary_and_checkpoints(db, clock):
+    admin = new_admin(db, "during@example.test")
+    race = published_race(db, admin, "During")
+    _, token = invited(db, admin, race)
+    clock(START + timedelta(hours=1))
+    summary = open_invite(token, db)["race"]
+    assert summary["name"] == "During" and [p["name"] for p in summary["checkpoints"]] == ["A"]
+
+
+def test_after_race_end_invitation_is_expired_and_safe_404(db, clock):
+    admin = new_admin(db, "after@example.test")
+    race = published_race(db, admin, "After")
+    _, token = invited(db, admin, race)
+    clock(race.ends_at)
+    exc = status_of(open_invite, token, db)
+    assert exc.status_code == 404 and "After" not in str(exc.detail)
+    assert list_invitations(race.id, admin, db)[0]["state"] == "expired"
+
+
+def test_cannot_invite_or_resend_once_race_ended(db, clock):
+    admin = new_admin(db, "ended@example.test")
+    race = published_race(db, admin, "Ended")
+    created, _ = invited(db, admin, race)
+    other = create_rider(RiderIn(name="Late", phone="+5256"), admin, db)
+    clock(race.ends_at)
+    for call, args in ((invite, (race.id, InviteIn(rider_id=other.id, channel="whatsapp"))), (resend, (created["id"],))):
+        exc = status_of(call, *args, admin, db)
+        assert exc.status_code == 422 and exc.detail == "Race has already ended"
+    assert [item["id"] for item in list_invitations(race.id, admin, db)] == [created["id"]]
+
+
+def test_migration_0003_moves_only_active_invitations_to_race_end(tmp_path):
+    url = f"sqlite:///{tmp_path}/migrate.db"
+    backend = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    env = {**os.environ, "DATABASE_URL": url}
+    alembic = lambda target: subprocess.run([sys.executable, "-m", "alembic", "upgrade", target], cwd=backend, env=env, check=True)
+    alembic("0002_checkpoint_release")
+    with sqlite3.connect(tmp_path / "migrate.db") as conn:
+        conn.execute("insert into organizers (id, email, role, created_at) values (1, 'a@x', 'admin', '2030-01-01')")
+        conn.execute("insert into riders (id, organizer_id, name) values (1, 1, 'R'), (2, 1, 'R2')")
+        conn.execute("insert into races (id, organizer_id, name, start_label, latitude, longitude, starts_at, ends_at, status) "
+                     "values (1, 1, 'Old', 'Park', 0, 0, '2030-01-20 10:00:00', '2030-01-20 12:00:00', 'published')")
+        # Row 3: still flagged active but already past its old 168 h expiry; those riders were victims of the old rule.
+        for id_, rider, expires, active in ((1, 1, "2030-01-08 00:00:00", 1), (2, 1, "2030-01-08 00:00:00", 0),
+                                            (3, 2, "2020-01-01 00:00:00", 1)):
+            conn.execute("insert into invitations (id, race_id, rider_id, token_hash, expires_at, channel, delivery_status, active) "
+                         "values (?, 1, ?, ?, ?, 'whatsapp', 'link_ready', ?)", (id_, rider, f"h{id_}", expires, active))
+    alembic("head")
+    with sqlite3.connect(tmp_path / "migrate.db") as conn:
+        assert conn.execute("select id, expires_at from invitations order by id").fetchall() == [
+            (1, "2030-01-20 12:00:00"), (2, "2030-01-08 00:00:00"), (3, "2030-01-20 12:00:00")]

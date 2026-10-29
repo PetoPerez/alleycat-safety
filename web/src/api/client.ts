@@ -25,7 +25,7 @@ const MESSAGES: Record<string, string> = {
   "Publish race before inviting": "Publica la carrera antes de invitar.",
   "Unsupported delivery channel": "Canal de envío no válido.",
   "Email delivery requires a rider email address": "Este corredor no tiene email: invítalo por WhatsApp.",
-  "Invitation expiry must be between 1 hour and 30 days": "La invitación debe durar entre 1 hora y 30 días.",
+  "Race has already ended": "La carrera ya terminó.",
   "Active invitation exists; resend or revoke it": "Este corredor ya tiene una invitación activa: reenvíala o revócala.",
   "Invitation is no longer active": "La invitación ya no está activa.",
   "This invitation is invalid, expired, revoked, or already used": "Esta invitación no es válida, expiró, fue revocada o ya se usó.",

@@ -13,12 +13,12 @@ from .races import race_for
 
 router = APIRouter(tags=["invitations"])
 DUPLICATE = "Active invitation exists; resend or revoke it"
+ENDED = "Race has already ended"
 
 
 class InviteIn(BaseModel):
     rider_id: int
     channel: str
-    expires_hours: int = 168
 
 
 def response(invitation: Invitation, link: str):
@@ -41,6 +41,8 @@ def invite(race_id: int, body: InviteIn, account=Depends(organizer), db: Session
     race = race_for(race_id, account, db)
     if race.status != "published":
         raise HTTPException(422, "Publish race before inviting")
+    if race.ends_at <= utcnow():
+        raise HTTPException(422, ENDED)
     rider = db.get(Rider, body.rider_id)
     if not rider or rider.organizer_id != account.id:
         raise HTTPException(404, "Rider not found")
@@ -48,12 +50,10 @@ def invite(race_id: int, body: InviteIn, account=Depends(organizer), db: Session
         raise HTTPException(422, "Unsupported delivery channel")
     if body.channel == "email" and not rider.email:
         raise HTTPException(422, "Email delivery requires a rider email address")
-    if not 1 <= body.expires_hours <= 24 * 30:
-        raise HTTPException(422, "Invitation expiry must be between 1 hour and 30 days")
     if any(service.active(item) for item in db.query(Invitation).filter_by(race_id=race.id, rider_id=rider.id).all()):
         raise HTTPException(409, DUPLICATE)
     try:
-        invitation, link = service.issue(db, race, rider, body.channel, body.expires_hours)
+        invitation, link = service.issue(db, race, rider, body.channel)
         db.commit()
     except IntegrityError:
         db.rollback()
@@ -85,11 +85,12 @@ def revoke(invitation_id: int, account=Depends(organizer), db: Session = Depends
 @router.post("/invitations/{invitation_id}/resend")
 def resend(invitation_id: int, account=Depends(organizer), db: Session = Depends(get_db)):
     item = owned_invitation(invitation_id, account, db)
+    race = db.get(Race, item.race_id)
+    if race.ends_at <= utcnow():
+        raise HTTPException(422, ENDED)
     if not service.active(item):
         raise HTTPException(422, "Invitation is no longer active")
-    rider = db.get(Rider, item.rider_id)
-    hours_left = max(1, int((item.expires_at - utcnow()).total_seconds() // 3600))
-    replacement, link = service.issue(db, db.get(Race, item.race_id), rider, item.channel, hours_left, item)
+    replacement, link = service.issue(db, race, db.get(Rider, item.rider_id), item.channel, item)
     db.commit()
     return response(replacement, link)
 

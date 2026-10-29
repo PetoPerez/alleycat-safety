@@ -1,4 +1,3 @@
-from datetime import timedelta
 from ..database import utcnow
 from ..models import Invitation, InvitationEvent
 from ..security import new_token, token_hash
@@ -23,7 +22,7 @@ def event(db, invitation, name, detail=None):
     db.add(InvitationEvent(invitation_id=invitation.id, event=name, detail=detail))
 
 
-def issue(db, race, rider, channel: str, expires_hours: int, replacing=None):
+def issue(db, race, rider, channel: str, replacing=None):
     now = utcnow()
     # Retire expired-but-still-flagged rows first so the partial unique index admits the new one.
     for previous in db.query(Invitation).filter_by(race_id=race.id, rider_id=rider.id, active=True).all():
@@ -41,7 +40,7 @@ def issue(db, race, rider, channel: str, expires_hours: int, replacing=None):
     link = public_link(f"/invite/{token}")
     status = deliver(rider.email, link, "invitation") if channel == "email" else "link_ready"
     invitation = Invitation(race_id=race.id, rider_id=rider.id, token_hash=token_hash(token),
-                            expires_at=now + timedelta(hours=expires_hours), channel=channel, delivery_status=status)
+                            expires_at=race.ends_at, channel=channel, delivery_status=status)
     db.add(invitation)
     db.flush()
     event(db, invitation, "issued", channel)
