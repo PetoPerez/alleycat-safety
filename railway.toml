@@ -1,0 +1,7 @@
+[build]
+builder = "DOCKERFILE"
+dockerfilePath = "Dockerfile"
+
+[deploy]
+# Startup (alembic upgrade head + uvicorn on $PORT) lives in the Dockerfile CMD so the shell expands $PORT.
+restartPolicyType = "ON_FAILURE"

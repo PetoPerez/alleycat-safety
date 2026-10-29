@@ -1,0 +1,11 @@
+**/.venv
+**/node_modules
+**/__pycache__
+**/.pytest_cache
+**/*.db
+.git
+_bmad
+_bmad-output
+.claude
+.commandcode
+landing
