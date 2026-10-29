@@ -1,17 +1,10 @@
 import {useEffect, useState, type FormEvent} from "react";
-import L from "leaflet";
 import {MapContainer, Marker, TileLayer, Tooltip, useMap, useMapEvents} from "react-leaflet";
-import "leaflet/dist/leaflet.css";
-import markerIcon from "leaflet/dist/images/marker-icon.png";
-import markerIcon2x from "leaflet/dist/images/marker-icon-2x.png";
-import markerShadow from "leaflet/dist/images/marker-shadow.png";
+import L from "./leaflet";
 import {errorText, fieldErrors, request, type Checkpoint, type Race, type RaceInput} from "../../api/client";
 import {useBusy} from "../../useBusy";
-import {formatWhen, fromLocalInput, pinsForDisplay, toLocalInput} from "./mapUtils";
+import {formatRelease, formatWhen, fromLocalInput, msUntil, pinsForDisplay, toLocalInput} from "./mapUtils";
 
-// Vite rewrites asset URLs, which breaks Leaflet's default-icon path detection.
-delete (L.Icon.Default.prototype as unknown as {_getIconUrl?: unknown})._getIconUrl;
-L.Icon.Default.mergeOptions({iconUrl: markerIcon, iconRetinaUrl: markerIcon2x, shadowUrl: markerShadow});
 const chosenIcon = L.divIcon({className: "chosen-spot", iconSize: [18, 18]}); // where the next pin goes
 
 const FieldError = ({id, text}: {id: string; text?: string}) => (text ? <p className="field-error" id={id}>{text}</p> : null);
@@ -27,8 +20,10 @@ export function RaceForm({initial, submitLabel, onSubmit}: {initial?: Race; subm
     const get = (key: string) => String(data.get(key) ?? "");
     // Number("") is 0: a blank coordinate would silently become a valid point.
     const missing: Record<string, string> = {};
-    for (const key of ["latitude", "longitude"]) if (!get(key).trim()) missing[key] = "Indica un número";
+    for (const key of ["latitude", "longitude", "checkpoints_release_minutes"]) if (!get(key).trim()) missing[key] = "Indica un número";
     for (const key of ["starts_at", "ends_at"]) if (!get(key)) missing[key] = "Indica fecha y hora";
+    const minutes = get("checkpoints_release_minutes");
+    if (!missing.checkpoints_release_minutes && !Number.isInteger(Number(minutes))) missing.checkpoints_release_minutes = "Indica un número entero de minutos";
     if (Object.keys(missing).length) {
       setErrors(missing); setMessage("");
       return;
@@ -39,6 +34,7 @@ export function RaceForm({initial, submitLabel, onSubmit}: {initial?: Race; subm
         name: get("name"), start_label: get("start_label"),
         latitude: Number(get("latitude")), longitude: Number(get("longitude")),
         starts_at: fromLocalInput(get("starts_at")), ends_at: fromLocalInput(get("ends_at")),
+        checkpoints_release_minutes: Number(get("checkpoints_release_minutes")),
       });
     } catch (error) {
       const fields = fieldErrors(error);
@@ -67,6 +63,8 @@ export function RaceForm({initial, submitLabel, onSubmit}: {initial?: Race; subm
         {field("starts_at", "Inicio (hora local)", {type: "datetime-local", defaultValue: initial && toLocalInput(initial.starts_at)})}
         {field("ends_at", "Fin (hora local)", {type: "datetime-local", defaultValue: initial && toLocalInput(initial.ends_at)})}
       </div>
+      {field("checkpoints_release_minutes", "Liberar checkpoints (minutos antes del inicio)",
+        {type: "number", min: 0, max: 1440, step: 1, inputMode: "numeric", defaultValue: initial?.checkpoints_release_minutes ?? 10})}
       {message && <p className="error" role="alert">{message}</p>}
       <button className="btn-primary" disabled={busy}>{submitLabel}</button>
     </form>
@@ -128,6 +126,19 @@ export function RaceEditor({race, onChanged}: {race: Race; onChanged: (race: Rac
     if (!window.confirm(`¿Publicar «${race.name}»? Ya no podrás editarla ni mover sus checkpoints.`)) return;
     run(async () => onChanged(await request<Race>(`/races/${race.id}/publish`, {method: "POST"})));
   };
+  // Re-render when the scheduled release passes; capped because setTimeout overflows past ~24.8 days.
+  const [tick, setTick] = useState(0);
+  const wait = race.checkpoints_released ? 0 : msUntil(race.checkpoints_release_at);
+  useEffect(() => {
+    if (wait <= 0) return;
+    const timer = setTimeout(() => setTick(n => n + 1), Math.min(wait, 2 ** 31 - 1));
+    return () => clearTimeout(timer);
+  }, [race.checkpoints_release_at, race.checkpoints_released, tick]); // eslint-disable-line react-hooks/exhaustive-deps
+  const released = race.checkpoints_released || wait <= 0;
+  const releaseNow = () => {
+    if (!window.confirm(`¿Liberar ya los checkpoints de «${race.name}»? Los invitados los verán de inmediato y no se pueden volver a ocultar.`)) return;
+    run(async () => onChanged(await request<Race>(`/races/${race.id}/release-checkpoints`, {method: "POST"})));
+  };
 
   return (
     <section className="card stack" aria-labelledby="race-title">
@@ -140,6 +151,16 @@ export function RaceEditor({race, onChanged}: {race: Race; onChanged: (race: Rac
         </details>
       ) : (
         <p className="muted">{race.start_label} · {formatWhen(race.starts_at)} – {formatWhen(race.ends_at)}</p>
+      )}
+      {draft ? (
+        <p className="muted">Los invitados verán los checkpoints {race.checkpoints_release_minutes} min antes del inicio.</p>
+      ) : released ? (
+        <p className="notice" role="status">Checkpoints liberados: los invitados ya los ven.</p>
+      ) : (
+        <div className="row spread">
+          <p role="status">Checkpoints ocultos. Se liberan a las {formatRelease(race.checkpoints_release_at)}.</p>
+          <button className="btn-secondary" disabled={busy} onClick={releaseNow}>Liberar ahora</button>
+        </div>
       )}
 
       <h3>Checkpoints</h3>

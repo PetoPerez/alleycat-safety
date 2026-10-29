@@ -1,17 +1,20 @@
 // One jsdom test per I/O-matrix row of spec-web-ui-race-administration.md, with fetch mocked.
 import {afterEach, beforeEach, describe, expect, it, vi} from "vitest";
 import {App} from "./App";
+import {act} from "react";
+import {formatRelease} from "./features/races/mapUtils";
 import {button, cleanup, click, field, flush, mockApi, render, submit, text, type} from "./test/dom";
 
 const race = (id: number, name: string, status = "draft") => ({
   id, name, status, start_label: `Salida ${name}`, latitude: 19.43, longitude: -99.13,
   starts_at: "2026-11-01T18:00:00Z", ends_at: "2026-11-01T21:00:00Z",
+  checkpoints_release_minutes: 10, checkpoints_release_at: "2099-11-01T17:50:00Z", checkpoints_released: false,
 });
 const admin = {id: 1, email: "org@x.mx", role: "admin"};
 const at = (path: string) => history.replaceState(null, "", path);
 
 beforeEach(() => at("/"));
-afterEach(cleanup);
+afterEach(async () => { await cleanup(); vi.useRealTimers(); });
 
 describe("matrix", () => {
   it("Pedir enlace: generic message plus dev preview; network failure keeps the email", async () => {
@@ -384,5 +387,137 @@ describe("matrix", () => {
     down = false;
     await click(button("Reintentar"));
     expect(text()).toContain("Noche");
+  });
+
+  const guestRace = {name: "Noche", start_label: "Z", starts_at: "2026-11-01T18:00:00Z", ends_at: "2026-11-01T21:00:00Z", checkpoints_release_at: "2026-11-01T17:50:00Z"};
+  const guestPins = [{name: "Zócalo", latitude: 19.432608, longitude: -99.133209}, {name: "Ángel", latitude: 19.427025, longitude: -99.167671}];
+
+  it("Invitado antes de la liberación: release time, no pins, then pins appear by themselves within 30 s", async () => {
+    vi.useFakeTimers({toFake: ["setInterval", "clearInterval"]});
+    at("/invite/tok");
+    let released = false;
+    const api = mockApi({"POST /invite/tok": () => ({body: {race: released ? {...guestRace, checkpoints: guestPins} : guestRace, next: "later"}})});
+    await render(<App />);
+    expect(text()).toContain(`se publican a las ${formatRelease(guestRace.checkpoints_release_at)}`);
+    expect(text()).not.toContain("Zócalo (");
+    expect(document.querySelector(".leaflet-marker-icon")).toBeNull();
+    released = true;
+    await act(async () => { vi.advanceTimersByTime(30_000); });
+    await flush();
+    expect(api.calls.map(c => c.key)).toEqual(["POST /invite/tok", "POST /invite/tok"]);
+    expect(text()).toContain("Zócalo (19.43261, -99.13321)");
+    expect(text()).not.toContain("se publican a las");
+  });
+
+  it("Invitado después: map pins and an alphabetical lat/lng list, no numbering", async () => {
+    at("/invite/tok");
+    mockApi({"POST /invite/tok": {body: {race: {...guestRace, checkpoints: guestPins}, next: "later"}}});
+    await render(<App />);
+    const items = [...document.querySelectorAll(".list li")].map(li => li.textContent);
+    expect(items).toEqual(["Ángel (19.42703, -99.16767)", "Zócalo (19.43261, -99.13321)"]);
+    expect(document.querySelectorAll(".leaflet-marker-icon").length).toBe(2);
+    expect(document.querySelector("ol")).toBeNull();
+  });
+
+  it("Liberar ahora: asks first, POSTs, then shows released with no way to hide", async () => {
+    const api = published(() => [], {"POST /races/1/release-checkpoints": {body: {...race(1, "Uno", "published"), checkpoints_released: true}}});
+    const confirm = vi.spyOn(window, "confirm").mockReturnValueOnce(false).mockReturnValueOnce(true);
+    await render(<App />);
+    await click(button("Uno"));
+    expect(text()).toContain(`Se liberan a las ${formatRelease("2099-11-01T17:50:00Z")}`);
+    await click(button("Liberar ahora"));
+    expect(api.calls.some(c => c.key.endsWith("/release-checkpoints"))).toBe(false);
+    await click(button("Liberar ahora"));
+    expect(confirm).toHaveBeenCalledTimes(2);
+    expect(api.calls.filter(c => c.key === "POST /races/1/release-checkpoints").length).toBe(1);
+    expect(text()).toContain("Checkpoints liberados");
+    expect(text()).not.toContain("Liberar ahora");
+    expect(text()).not.toMatch(/ocultar/i);
+  });
+
+  it("Minutos inválidos: 422 lands under the release-minutes field; the value is sent as a number", async () => {
+    const api = mockApi({
+      "GET /auth/me": {body: admin}, "GET /races": {body: []},
+      "POST /races": {status: 422, body: {detail: [{loc: ["body", "checkpoints_release_minutes"], msg: "Release minutes must be between 0 and 1440"}]}},
+    });
+    await render(<App />);
+    await click(button("Nueva carrera"));
+    expect(field("Liberar checkpoints").value).toBe("10");
+    await type(field("Nombre"), "Nueva");
+    await type(field("Zona de salida"), "Zócalo");
+    await type(field("Inicio (hora local)"), "2026-11-01T20:00");
+    await type(field("Fin (hora local)"), "2026-11-01T23:00");
+    await type(field("Liberar checkpoints"), "2000");
+    await submit(button("Crear borrador").closest("form")!);
+    expect((api.calls.find(c => c.key === "POST /races")!.body as Record<string, unknown>).checkpoints_release_minutes).toBe(2000);
+    const minutes = field("Liberar checkpoints");
+    expect(minutes.getAttribute("aria-invalid")).toBe("true");
+    expect(minutes.parentElement!.textContent).toContain("Indica entre 0 y 1440 minutos.");
+  });
+
+  it("Liberación programada: a past release shows released; an open editor flips when the time passes", async () => {
+    const api = mockApi({
+      "GET /auth/me": {body: admin},
+      "GET /races": {body: [{...race(1, "Pasada", "published"), checkpoints_release_at: "2000-01-01T00:00:00Z"},
+                            {...race(2, "Pronto", "published"), checkpoints_release_at: new Date(Date.now() + 80).toISOString()}]},
+      "GET /races/1/checkpoints": {body: []}, "GET /races/2/checkpoints": {body: []}, "GET /riders": {body: []},
+      "GET /races/1/invitations": {body: []}, "GET /races/2/invitations": {body: []},
+    });
+    await render(<App />);
+    await click(button("Pasada"));
+    expect(text()).toContain("Checkpoints liberados");
+    expect(text()).not.toContain("Liberar ahora");
+    await click(button("Pronto"));
+    expect(text()).toContain("Liberar ahora");
+    await act(async () => { await new Promise(r => setTimeout(r, 150)); });
+    await flush();
+    expect(text()).toContain("Checkpoints liberados");
+    expect(text()).not.toContain("Liberar ahora");
+    expect(api.calls.some(c => c.key.includes("release-checkpoints"))).toBe(false);
+  });
+
+  it("Minutos: fractional or non-finite values get a Spanish field error and are not sent", async () => {
+    const api = mockApi({"GET /auth/me": {body: admin}, "GET /races": {body: []}});
+    await render(<App />);
+    await click(button("Nueva carrera"));
+    // The number input sanitizes 1e400 (Infinity) to "", which hits the blank-field message instead.
+    for (const [bad, message] of [["1.5", "Indica un número entero de minutos"], ["1e400", "Indica un número"]]) {
+      await type(field("Liberar checkpoints"), bad);
+      await submit(button("Crear borrador").closest("form")!);
+      expect(field("Liberar checkpoints").parentElement!.textContent).toContain(message);
+    }
+    expect(api.calls.some(c => c.key === "POST /races")).toBe(false);
+  });
+
+  it("Editar minutos: the form shows the saved value and the PUT carries it", async () => {
+    const api = mockApi({
+      "GET /auth/me": {body: admin}, "GET /races": {body: [{...race(1, "Uno"), checkpoints_release_minutes: 30}]},
+      "GET /races/1/checkpoints": {body: []}, "GET /riders": {body: []}, "GET /races/1/invitations": {body: []},
+      "PUT /races/1": {body: {...race(1, "Uno"), checkpoints_release_minutes: 30}},
+    });
+    await render(<App />);
+    await click(button("Uno"));
+    expect(field("Liberar checkpoints").value).toBe("30");
+    await submit(field("Liberar checkpoints").closest("form")!);
+    expect((api.calls.find(c => c.key === "PUT /races/1")!.body as Record<string, unknown>).checkpoints_release_minutes).toBe(30);
+  });
+
+  it("Invitado: a failed refresh keeps the page and retries in 5 s; a later 404 shows the invalid state", async () => {
+    vi.useFakeTimers({toFake: ["setInterval", "clearInterval"]});
+    at("/invite/tok");
+    let gone = false;
+    const api = mockApi({"POST /invite/tok": () => (gone ? {status: 404, body: {detail: "invalid"}} : {body: {race: guestRace, next: "later"}})});
+    await render(<App />);
+    api.fetchMock.mockRejectedValueOnce(new TypeError("offline"));
+    await act(async () => { vi.advanceTimersByTime(30_000); });
+    await flush();
+    expect(text()).toContain("Noche");
+    expect(text()).toContain(`se publican a las ${formatRelease(guestRace.checkpoints_release_at)}`);
+    expect(text()).not.toContain("Reintentar");
+    gone = true;
+    await act(async () => { vi.advanceTimersByTime(5_000); });
+    await flush();
+    expect(api.fetchMock).toHaveBeenCalledTimes(3); // the rejected refresh never reaches api.calls
+    expect(text()).toContain("Invitación no disponible");
   });
 });

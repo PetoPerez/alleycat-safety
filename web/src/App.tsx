@@ -1,9 +1,11 @@
 import {Fragment, useEffect, useState, type FormEvent} from "react";
+import {MapContainer, Marker, TileLayer, Tooltip} from "react-leaflet";
+import L from "./features/races/leaflet";
 import {ApiError, errorText, request, setOnUnauthorized, type Me, type Race} from "./api/client";
 import {RaceEditor, RaceForm} from "./features/races/RaceEditor";
 import {InvitationPanel} from "./features/invitations/InvitationPanel";
 import {AdminPanel} from "./features/admin/AdminPanel";
-import {formatWhen} from "./features/races/mapUtils";
+import {formatRelease, formatWhen, pinsForDisplay} from "./features/races/mapUtils";
 
 /** token null = malformed link: show the safe invalid state without calling the API. */
 export type Route = {view: "invite" | "consume"; token: string | null} | {view: "app"};
@@ -30,8 +32,13 @@ export function App() {
   );
 }
 
-type InviteSummary = {race: {name: string; start_label: string; starts_at: string; ends_at: string}; next: string};
-type Load<T> = {state: "loading"} | {state: "ok"; value: T} | {state: "invalid"} | {state: "retry"; message: string};
+type GuestPin = {name: string; latitude: number; longitude: number};
+/** `checkpoints` is absent until the server releases them. */
+type InviteSummary = {race: {name: string; start_label: string; starts_at: string; ends_at: string; checkpoints_release_at: string; checkpoints?: GuestPin[]}; next: string};
+const REFRESH_MS = 30_000;
+const RETRY_MS = 5_000; // after a failed refresh, so a blip doesn't push the next try a full cycle away
+/** stale: the last refresh failed on the network, so `value` is the previous good answer. */
+type Load<T> = {state: "loading"} | {state: "ok"; value: T; stale?: boolean} | {state: "invalid"} | {state: "retry"; message: string};
 
 /** POSTs a link token once per attempt. 4xx = safe invalid state; network/5xx = retry, not "invalid". */
 function useTokenPost<T>(path: string | null, onOk?: (value: T) => void) {
@@ -39,11 +46,11 @@ function useTokenPost<T>(path: string | null, onOk?: (value: T) => void) {
   const [load, setLoad] = useState<Load<T>>(path ? {state: "loading"} : {state: "invalid"});
   useEffect(() => {
     if (!path) return;
-    setLoad({state: "loading"});
+    setLoad(prev => (prev.state === "ok" ? prev : {state: "loading"})); // refreshes keep showing the last value
     request<T>(path, {method: "POST"}).then(
       value => { setLoad({state: "ok", value}); onOk?.(value); },
-      error => setLoad(error instanceof ApiError && error.status >= 400 && error.status < 500
-        ? {state: "invalid"} : {state: "retry", message: errorText(error)}),
+      error => setLoad(prev => error instanceof ApiError && error.status >= 400 && error.status < 500
+        ? {state: "invalid"} : prev.state === "ok" ? {...prev, stale: true} : {state: "retry", message: errorText(error)}),
     );
   }, [path, attempt]); // eslint-disable-line react-hooks/exhaustive-deps
   return [load, () => setAttempt(n => n + 1)] as const;
@@ -60,6 +67,13 @@ function Retry({message, onRetry}: {message: string; onRetry: () => void}) {
 
 export function InviteView({token}: {token: string | null}) {
   const [load, retry] = useTokenPost<InviteSummary>(token === null ? null : `/invite/${encodeURIComponent(token)}`);
+  const waiting = load.state === "ok" && !load.value.race.checkpoints;
+  const stale = load.state === "ok" && !!load.stale;
+  useEffect(() => {
+    if (!waiting) return;
+    const timer = setInterval(retry, stale ? RETRY_MS : REFRESH_MS); // the server decides when checkpoints appear
+    return () => clearInterval(timer);
+  }, [waiting, stale]); // eslint-disable-line react-hooks/exhaustive-deps
   if (load.state === "invalid") return <section className="card stack"><h1>Invitación no disponible</h1><p>Este enlace no es válido, expiró, fue revocado o ya se usó. Pide uno nuevo a quien organiza la carrera.</p></section>;
   if (load.state === "retry") return <Retry message={load.message} onRetry={retry} />;
   if (load.state === "loading") return <p role="status">Abriendo invitación…</p>;
@@ -70,8 +84,33 @@ export function InviteView({token}: {token: string | null}) {
       <h1>{race.name}</h1>
       <p><strong>Salida:</strong> {race.start_label}</p>
       <p><strong>Horario:</strong> {formatWhen(race.starts_at)} – {formatWhen(race.ends_at)}</p>
+      {race.checkpoints ? <GuestCheckpoints pins={race.checkpoints} />
+        : <p className="notice" role="status">Los checkpoints se publican a las {formatRelease(race.checkpoints_release_at)}. Deja esta página abierta: aparecerán solos.</p>}
       <p className="notice">El registro de corredores llegará en una próxima versión. Guarda este enlace.</p>
     </section>
+  );
+}
+
+/** Read-only: no ordering, numbering or route; the list is alphabetical only to find a name. */
+function GuestCheckpoints({pins}: {pins: GuestPin[]}) {
+  const sorted = pinsForDisplay(pins);
+  const bounds = L.latLngBounds(sorted.map(p => [p.latitude, p.longitude] as [number, number]));
+  return (
+    <>
+      <h2>Checkpoints</h2>
+      <p className="muted">Visítalos en el orden que quieras.</p>
+      <MapContainer bounds={bounds} boundsOptions={{padding: [24, 24], maxZoom: 16}} className="checkpoint-map">
+        <TileLayer attribution="&copy; OpenStreetMap contributors" url="https://tile.openstreetmap.org/{z}/{x}/{y}.png" />
+        {sorted.map((pin, i) => (
+          <Marker key={i} position={[pin.latitude, pin.longitude]}><Tooltip>{pin.name}</Tooltip></Marker>
+        ))}
+      </MapContainer>
+      <ul className="list">
+        {sorted.map((pin, i) => (
+          <li key={i}><span>{pin.name} <span className="muted">({pin.latitude.toFixed(5)}, {pin.longitude.toFixed(5)})</span></span></li>
+        ))}
+      </ul>
+    </>
   );
 }
 

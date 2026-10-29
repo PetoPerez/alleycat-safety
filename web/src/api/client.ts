@@ -1,6 +1,7 @@
 export type Me = {id: number; email: string; role: "superadmin" | "admin"};
-export type Race = {id: number; name: string; start_label: string; latitude: number; longitude: number; starts_at: string; ends_at: string; status: "draft" | "published"};
-export type RaceInput = Omit<Race, "id" | "status">;
+export type Race = {id: number; name: string; start_label: string; latitude: number; longitude: number; starts_at: string; ends_at: string; status: "draft" | "published";
+  checkpoints_release_minutes: number; checkpoints_release_at: string; checkpoints_released: boolean};
+export type RaceInput = Omit<Race, "id" | "status" | "checkpoints_release_at" | "checkpoints_released">;
 export type Checkpoint = {id: number; name: string; description?: string | null; latitude: number; longitude: number};
 export type Rider = {id: number; name: string; email?: string | null; phone?: string | null};
 export type InvitationState = "sent" | "opened" | "expired" | "revoked" | "used";
@@ -37,6 +38,8 @@ const MESSAGES: Record<string, string> = {
   "Email or phone is required": "Indica un email o un teléfono.",
   "Checkpoint label cannot be blank": "Escribe una etiqueta para el checkpoint.",
   "Add at least one checkpoint before publishing": "Añade al menos un checkpoint antes de publicar.",
+  "Release minutes must be between 0 and 1440": "Indica entre 0 y 1440 minutos.",
+  "Publish race before releasing checkpoints": "Publica la carrera antes de liberar los checkpoints.",
 };
 const BY_STATUS: Record<number, string> = {
   401: MESSAGES["Organizer authentication required"], 403: "No tienes permiso para hacer esto.",

@@ -28,3 +28,6 @@
 - source_spec: `_bmad-output/implementation-artifacts/spec-web-ui-race-administration.md`
   summary: Test automatizado de que un clic en el mapa Leaflet cambia las coordenadas del checkpoint enviado.
   evidence: Simular eventos de Leaflet en jsdom es costoso; hoy sólo lo cubre la prueba manual en Chrome.
+- source_spec: `_bmad-output/implementation-artifacts/spec-checkpoint-release.md`
+  summary: La caducidad de la invitación (168 h por defecto; la UI no permite elegirla) no está ligada al horario de la carrera, así que invitar más de 7 días antes deja al corredor sin acceso cuando se liberan los checkpoints.
+  evidence: `backend/app/routers/invitations.py:21` `expires_hours: int = 168`; `InvitationPanel.tsx` no envía `expires_hours`. Viene de la spec de backend; requiere decidir la regla (p. ej. caducar al terminar la carrera).

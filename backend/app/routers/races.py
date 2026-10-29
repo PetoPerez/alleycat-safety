@@ -2,7 +2,7 @@ from datetime import datetime
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import AwareDatetime, BaseModel, ConfigDict
 from sqlalchemy.orm import Session
-from ..database import get_db
+from ..database import get_db, utcnow
 from ..models import Checkpoint, Race, Rider
 from ..services import races as race_service
 from .auth import organizer
@@ -17,6 +17,7 @@ class RaceIn(BaseModel):
     longitude: float
     starts_at: AwareDatetime
     ends_at: AwareDatetime
+    checkpoints_release_minutes: int = 10
 
 
 class CheckpointIn(BaseModel):
@@ -45,6 +46,9 @@ class RaceOut(Out):
     starts_at: datetime
     ends_at: datetime
     status: str
+    checkpoints_release_minutes: int
+    checkpoints_release_at: datetime
+    checkpoints_released: bool
 
 
 class CheckpointOut(Out):
@@ -92,6 +96,8 @@ def validate(body: RaceIn):
         field_error(coordinate_field(body.latitude), "Invalid coordinates")
     if body.ends_at <= body.starts_at:
         field_error("ends_at", "End time must be after start time")
+    if not race_service.release_minutes_valid(body.checkpoints_release_minutes):
+        field_error("checkpoints_release_minutes", "Release minutes must be between 0 and 1440")
 
 
 def draft_for(race_id: int, account, db: Session) -> Race:
@@ -193,4 +199,18 @@ def publish(race_id: int, account=Depends(organizer), db: Session = Depends(get_
     race.status = "published"
     db.commit()
     db.refresh(race)
+    return race
+
+
+@router.post("/races/{race_id}/release-checkpoints", response_model=RaceOut)
+def release_checkpoints(race_id: int, account=Depends(organizer), db: Session = Depends(get_db)):
+    """Irreversible: there is deliberately no endpoint to hide checkpoints again."""
+    race = race_for(race_id, account, db)
+    if race.status != "published":
+        raise HTTPException(422, "Publish race before releasing checkpoints")
+    now = utcnow()
+    if not race_service.released(race, now):  # already released: idempotent, release time stays put
+        race.checkpoints_released_at = now
+        db.commit()
+        db.refresh(race)
     return race

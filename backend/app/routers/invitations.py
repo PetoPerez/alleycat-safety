@@ -3,9 +3,10 @@ from pydantic import BaseModel
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 from ..database import get_db, utcnow
-from ..models import Invitation, Race, Rider
+from ..models import Checkpoint, Invitation, Race, Rider
 from ..security import token_hash
 from ..services import invitations as service
+from ..services import races as race_service
 from ..services.mailer import preview_enabled
 from .auth import organizer
 from .races import race_for
@@ -105,5 +106,10 @@ def open_invite(token: str, db: Session = Depends(get_db)):
         service.event(db, item, "opened")
         db.commit()
     race = db.get(Race, item.race_id)
-    return {"race": {"name": race.name, "start_label": race.start_label, "starts_at": race.starts_at, "ends_at": race.ends_at},
-            "next": "Registration will be available in a later release."}
+    summary = {"name": race.name, "start_label": race.start_label, "starts_at": race.starts_at, "ends_at": race.ends_at,
+               "checkpoints_release_at": race_service.release_at(race)}
+    # Before release the response carries no checkpoint data at all, not even a count.
+    if race_service.released(race, utcnow()):
+        pins = db.query(Checkpoint).filter_by(race_id=race.id, active=True).order_by(Checkpoint.name).all()
+        summary["checkpoints"] = [{"name": p.name, "latitude": p.latitude, "longitude": p.longitude} for p in pins]
+    return {"race": summary, "next": "Registration will be available in a later release."}

@@ -1,7 +1,8 @@
 from datetime import datetime
-from sqlalchemy import Boolean, CheckConstraint, Float, ForeignKey, Index, String, Text, text
+from sqlalchemy import Boolean, CheckConstraint, Float, ForeignKey, Index, Integer, String, Text, text
 from sqlalchemy.orm import Mapped, mapped_column
 from .database import Base, UTCDateTime, utcnow
+from .services.races import release_at, released
 
 
 class Organizer(Base):
@@ -33,6 +34,16 @@ class Race(Base):
     starts_at: Mapped[datetime] = mapped_column(UTCDateTime)
     ends_at: Mapped[datetime] = mapped_column(UTCDateTime)
     status: Mapped[str] = mapped_column(String, default="draft")
+    checkpoints_release_minutes: Mapped[int] = mapped_column(Integer, default=10, server_default="10")
+    checkpoints_released_at: Mapped[datetime | None] = mapped_column(UTCDateTime, nullable=True)  # "release now"; never cleared
+
+    @property
+    def checkpoints_release_at(self) -> datetime:
+        return release_at(self)
+
+    @property
+    def checkpoints_released(self) -> bool:
+        return released(self, utcnow())
 
 
 class Checkpoint(Base):

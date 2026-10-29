@@ -6,6 +6,9 @@ used here; handler tests preserve lifecycle coverage without it.
 import asyncio
 import logging
 import os
+import sqlite3
+import subprocess
+import sys
 import tempfile
 from datetime import UTC, datetime, timedelta
 
@@ -24,7 +27,7 @@ from app.routers.admin import create_organizer, list_organizers
 from app.routers.auth import EmailIn, consume_magic_link, issue_magic_link, organizer, superadmin
 from app.routers.invitations import InviteIn, invite, list_invitations, open_invite, resend, revoke
 from app.routers.races import (CheckpointIn, RaceIn, RiderIn, add_checkpoint, checkpoints, create_race, create_rider,
-                               delete_checkpoint, edit_race, get_race, publish)
+                               delete_checkpoint, edit_race, get_race, publish, release_checkpoints)
 from app.services import mailer
 
 Base.metadata.create_all(engine)
@@ -367,3 +370,114 @@ def test_other_organizers_cannot_touch_races_riders_or_invitations(db):
                        (invite, (other_race.id, InviteIn(rider_id=rider.id, channel="whatsapp")))):
         assert status_of(call, *args, other, db).status_code == 404
     assert status_of(organizer, None, db).status_code == 401
+
+
+# --- checkpoint release -------------------------------------------------------
+
+@pytest.fixture
+def clock(monkeypatch):
+    """Sets "now" for every module that decides checkpoint visibility."""
+    def set_now(when):
+        for target in ("app.models.utcnow", "app.routers.races.utcnow", "app.routers.invitations.utcnow"):
+            monkeypatch.setattr(target, lambda: when)
+    return set_now
+
+
+def invited(db, admin, race):
+    rider = create_rider(RiderIn(name="Rider", phone="+5255"), admin, db)
+    created = invite(race.id, InviteIn(rider_id=rider.id, channel="whatsapp"), admin, db)
+    return created, token_of(created["link"])
+
+
+def test_release_minutes_default_range_and_field_error(db):
+    admin = new_admin(db, "minutes@example.test")
+    assert create_race(race_input("Default"), admin, db).checkpoints_release_minutes == 10
+    for ok in (0, 1440):
+        assert create_race(race_input(checkpoints_release_minutes=ok), admin, db).checkpoints_release_minutes == ok
+    for bad in (-1, 1441):
+        exc = status_of(create_race, race_input(checkpoints_release_minutes=bad), admin, db)
+        assert exc.status_code == 422 and exc.detail[0]["loc"] == ["body", "checkpoints_release_minutes"]
+    race = create_race(race_input("Edit minutes"), admin, db)
+    assert edit_race(race.id, race_input("Edit minutes", checkpoints_release_minutes=30), admin, db).checkpoints_release_minutes == 30
+    db.expire_all()
+    assert get_race(race.id, admin, db).checkpoints_release_minutes == 30
+
+
+def test_zero_minutes_releases_exactly_at_start(db, clock):
+    admin = new_admin(db, "zero@example.test")
+    race = create_race(race_input("Zero", checkpoints_release_minutes=0), admin, db)
+    add_checkpoint(race.id, CheckpointIn(name="A", latitude=19.41, longitude=-99.11), admin, db)
+    publish(race.id, admin, db)
+    _, token = invited(db, admin, race)
+    clock(START - timedelta(microseconds=1))
+    summary = open_invite(token, db)["race"]
+    assert summary["checkpoints_release_at"] == START and "checkpoints" not in summary
+    clock(START)
+    assert [p["name"] for p in open_invite(token, db)["race"]["checkpoints"]] == ["A"]
+
+
+def test_guest_before_release_gets_release_time_but_no_checkpoints(db, clock):
+    admin = new_admin(db, "before@example.test")
+    race = published_race(db, admin, "Before")
+    _, token = invited(db, admin, race)
+    clock(START - timedelta(minutes=11))
+    summary = open_invite(token, db)["race"]
+    assert summary["checkpoints_release_at"] == START - timedelta(minutes=10)
+    assert "checkpoints" not in summary and "19.41" not in str(summary)
+    assert get_race(race.id, admin, db).checkpoints_released is False
+
+
+def test_scheduled_release_shows_all_checkpoints_by_name(db, clock):
+    admin = new_admin(db, "scheduled@example.test")
+    race = create_race(race_input("Scheduled", checkpoints_release_minutes=30), admin, db)
+    for name, lat in (("Zeta", 19.43), ("Alfa", 19.41)):
+        add_checkpoint(race.id, CheckpointIn(name=name, latitude=lat, longitude=-99.1), admin, db)
+    publish(race.id, admin, db)
+    _, token = invited(db, admin, race)
+    clock(START - timedelta(minutes=30))
+    assert open_invite(token, db)["race"]["checkpoints"] == [
+        {"name": "Alfa", "latitude": 19.41, "longitude": -99.1}, {"name": "Zeta", "latitude": 19.43, "longitude": -99.1}]
+
+
+def test_release_now_is_owner_only_published_only_and_idempotent(db, clock):
+    owner = new_admin(db, "release@example.test")
+    other = new_admin(db, "release-other@example.test")
+    draft = create_race(race_input("Draft release"), owner, db)
+    assert status_of(release_checkpoints, draft.id, owner, db).status_code == 422
+    race = published_race(db, owner, "Release now")
+    assert status_of(release_checkpoints, race.id, other, db).status_code == 404
+    _, token = invited(db, owner, race)
+    early = START - timedelta(days=1)
+    clock(early)
+    assert "checkpoints" not in open_invite(token, db)["race"]
+    released = release_checkpoints(race.id, owner, db)
+    assert released.checkpoints_released and released.checkpoints_released_at == early
+    assert [p["name"] for p in open_invite(token, db)["race"]["checkpoints"]] == ["A"]
+    clock(early + timedelta(hours=1))
+    assert release_checkpoints(race.id, owner, db).checkpoints_released_at == early
+
+
+def test_invalid_invitation_never_leaks_release_data(db, clock):
+    admin = new_admin(db, "leak@example.test")
+    race = published_race(db, admin, "Leak")
+    created, token = invited(db, admin, race)
+    release_checkpoints(race.id, admin, db)
+    revoke(created["id"], admin, db)
+    for value in (token, "unknown-token"):
+        exc = status_of(open_invite, value, db)
+        assert exc.status_code == 404 and "checkpoint" not in str(exc.detail).lower()
+
+
+def test_migration_0002_applies_with_default_for_existing_races(tmp_path):
+    url = f"sqlite:///{tmp_path}/migrate.db"
+    backend = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    env = {**os.environ, "DATABASE_URL": url}
+    alembic = lambda target: subprocess.run([sys.executable, "-m", "alembic", "upgrade", target], cwd=backend, env=env, check=True)
+    alembic("0001_initial")
+    with sqlite3.connect(tmp_path / "migrate.db") as conn:
+        conn.execute("insert into organizers (id, email, role, created_at) values (1, 'a@x', 'admin', '2030-01-01')")
+        conn.execute("insert into races (organizer_id, name, start_label, latitude, longitude, starts_at, ends_at, status) "
+                     "values (1, 'Old', 'Park', 0, 0, '2030-01-01', '2030-01-02', 'published')")
+    alembic("head")
+    with sqlite3.connect(tmp_path / "migrate.db") as conn:
+        assert conn.execute("select checkpoints_release_minutes, checkpoints_released_at from races").fetchall() == [(10, None)]
