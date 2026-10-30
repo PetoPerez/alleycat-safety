@@ -25,7 +25,7 @@ from app.main import app
 from app.models import Checkpoint, Invitation, MagicLink, Organizer, OrganizerSession
 from app.routers.admin import create_organizer, list_organizers
 from app.routers.auth import EmailIn, consume_magic_link, issue_magic_link, organizer, superadmin
-from app.routers.invitations import InviteIn, invite, list_invitations, open_invite, resend, revoke
+from app.routers.invitations import InviteIn, confirm, invite, list_invitations, open_invite, resend, revoke
 from app.routers.live import (CheckInIn, HelpIn, PositionIn, ask_help, board, check_in, checkins, help_requests, positions,
                               report_position, resolve_help)
 from app.services.races import distance_m
@@ -731,3 +731,16 @@ def test_only_finished_races_can_be_deleted_with_everything_in_them(db, clock):
     assert db.query(Checkpoint).filter_by(race_id=race.id).count() == 0
     assert db.query(Invitation).filter_by(race_id=race.id).count() == 0
     assert len(list_riders(keep.id, admin, db)) == 1 and len(list_invitations(keep.id, admin, db)) == 1
+
+
+def test_rider_confirms_participation_from_the_invitation(db):
+    admin = new_admin(db, "confirm@example.test")
+    race = published_race(db, admin, "Confirm")
+    created, token = invited(db, admin, race)
+    assert open_invite(token, db)["confirmed"] is False
+    confirm(token, db)
+    confirm(token, db)  # idempotent
+    assert open_invite(token, db)["confirmed"] is True
+    assert list_invitations(race.id, admin, db)[0]["state"] == "confirmed"
+    revoke(created["id"], admin, db)
+    assert status_of(confirm, token, db).status_code == 404

@@ -91,6 +91,7 @@ class Invitation(Base):
     delivery_status: Mapped[str] = mapped_column(String, default="created")
     opened_at: Mapped[datetime | None] = mapped_column(UTCDateTime, nullable=True)
     used_at: Mapped[datetime | None] = mapped_column(UTCDateTime, nullable=True)  # set by rider registration (later slice)
+    confirmed_at: Mapped[datetime | None] = mapped_column(UTCDateTime, nullable=True)  # the rider said "I'm riding"
     revoked_at: Mapped[datetime | None] = mapped_column(UTCDateTime, nullable=True)
     active: Mapped[bool] = mapped_column(Boolean, default=True)
 

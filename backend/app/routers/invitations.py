@@ -119,5 +119,16 @@ def open_invite(token: str, db: Session = Depends(get_db)):
     if race_service.released(race, utcnow()):
         pins = db.query(Checkpoint).filter_by(race_id=race.id, active=True).order_by(Checkpoint.name).all()
         summary["checkpoints"] = [{"name": p.name, "latitude": p.latitude, "longitude": p.longitude} for p in pins]
-    return {"race": summary, "next": "Registration will be available in a later release."}
+    return {"race": summary, "confirmed": item.confirmed_at is not None}
+
+
+@router.post("/invite/{token}/confirm")
+def confirm(token: str, db: Session = Depends(get_db)):
+    """Idempotent: confirming twice keeps the first time."""
+    item = active_invitation(token, db)
+    if not item.confirmed_at:
+        item.confirmed_at = utcnow()
+        service.event(db, item, "confirmed")
+        db.commit()
+    return {"confirmed": True}
 

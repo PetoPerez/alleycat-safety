@@ -201,12 +201,22 @@ describe("matrix", () => {
 
   it("Vista de invitado: shows name, start and schedule", async () => {
     at("/invite/tok");
-    const api = mockApi({"POST /invite/tok": {body: {race: {name: "Noche Naranja", start_label: "Zócalo", starts_at: "2026-11-01T18:00:00Z", ends_at: "2026-11-01T21:00:00Z"}, next: "later"}}});
+    const api = mockApi({"POST /invite/tok": {body: {race: {name: "Noche Naranja", start_label: "Zócalo", starts_at: "2026-11-01T18:00:00Z", ends_at: "2026-11-01T21:00:00Z"}, confirmed: false}}});
     await render(<App />);
     expect(api.calls.map(c => c.key)).toEqual(["POST /invite/tok"]);
     expect(text()).toContain("Noche Naranja");
     expect(text()).toContain("Zócalo");
     expect(text()).toContain("Horario");
+  });
+
+  it("Vista de invitado: the rider confirms participation", async () => {
+    at("/invite/tok");
+    const api = mockApi({"POST /invite/tok": {body: {race: {name: "Noche", start_label: "Zócalo", starts_at: "2026-11-01T18:00:00Z", ends_at: "2026-11-01T21:00:00Z"}, confirmed: false}},
+      "POST /invite/tok/confirm": {body: {confirmed: true}}});
+    await render(<App />);
+    await click(button("Confirmo que participo"));
+    expect(api.calls.map(c => c.key)).toContain("POST /invite/tok/confirm");
+    expect(text()).toContain("Participación confirmada");
   });
 
   it("Vista de invitado 404: safe state without race data", async () => {
@@ -413,7 +423,7 @@ describe("matrix", () => {
     vi.useFakeTimers({toFake: ["setInterval", "clearInterval"]});
     at("/invite/tok");
     let released = false;
-    const api = mockApi({"POST /invite/tok": () => ({body: {race: released ? {...guestRace, checkpoints: guestPins} : guestRace, next: "later"}})});
+    const api = mockApi({"POST /invite/tok": () => ({body: {race: released ? {...guestRace, checkpoints: guestPins} : guestRace, confirmed: false}})});
     await render(<App />);
     expect(text()).toContain(`se publican a las ${formatRelease(guestRace.checkpoints_release_at)}`);
     expect(text()).not.toContain("Zócalo (");
@@ -428,7 +438,7 @@ describe("matrix", () => {
 
   it("Invitado después: map pins and an alphabetical lat/lng list, no numbering", async () => {
     at("/invite/tok");
-    mockApi({"POST /invite/tok": {body: {race: {...guestRace, checkpoints: guestPins}, next: "later"}}});
+    mockApi({"POST /invite/tok": {body: {race: {...guestRace, checkpoints: guestPins}, confirmed: false}}});
     await render(<App />);
     const items = [...document.querySelectorAll(".list li")].map(li => li.textContent);
     expect(items).toEqual(["Ángel (19.42703, -99.16767)", "Zócalo (19.43261, -99.13321)"]);
@@ -523,7 +533,7 @@ describe("matrix", () => {
     vi.useFakeTimers({toFake: ["setInterval", "clearInterval"]});
     at("/invite/tok");
     let gone = false;
-    const api = mockApi({"POST /invite/tok": () => (gone ? {status: 404, body: {detail: "invalid"}} : {body: {race: guestRace, next: "later"}})});
+    const api = mockApi({"POST /invite/tok": () => (gone ? {status: 404, body: {detail: "invalid"}} : {body: {race: guestRace, confirmed: false}})});
     await render(<App />);
     api.fetchMock.mockRejectedValueOnce(new TypeError("offline"));
     await act(async () => { vi.advanceTimersByTime(30_000); });
@@ -541,7 +551,7 @@ describe("matrix", () => {
 
 describe("race day: checkpoint QR and help", () => {
   const summary = {race: {name: "Noche", start_label: "Zócalo", starts_at: "2026-11-01T18:00:00Z", ends_at: "2026-11-01T21:00:00Z",
-    checkpoints_release_at: "2026-11-01T17:50:00Z"}, next: "later"};
+    checkpoints_release_at: "2026-11-01T17:50:00Z"}, confirmed: false};
   afterEach(() => { localStorage.clear(); });
 
   const gps = (coords: {latitude: number; longitude: number} | null) => Object.defineProperty(navigator, "geolocation", {configurable: true,

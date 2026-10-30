@@ -15,7 +15,7 @@ def state(invitation: Invitation) -> str:
         return "expired"
     if not invitation.active:
         return "revoked"  # includes credentials replaced by a resend
-    return "opened" if invitation.opened_at else "sent"
+    return "confirmed" if invitation.confirmed_at else "opened" if invitation.opened_at else "sent"
 
 
 def event(db, invitation, name, detail=None):

@@ -40,7 +40,7 @@ export function App() {
 
 type GuestPin = {name: string; latitude: number; longitude: number};
 /** `checkpoints` is absent until the server releases them. */
-type InviteSummary = {race: {name: string; start_label: string; starts_at: string; ends_at: string; checkpoints_release_at: string; checkpoints?: GuestPin[]}; next: string};
+type InviteSummary = {race: {name: string; start_label: string; starts_at: string; ends_at: string; checkpoints_release_at: string; checkpoints?: GuestPin[]}; confirmed: boolean};
 const REFRESH_MS = 30_000;
 const RETRY_MS = 5_000; // after a failed refresh, so a blip doesn't push the next try a full cycle away
 /** stale: the last refresh failed on the network, so `value` is the previous good answer. */
@@ -88,18 +88,39 @@ export function InviteView({token}: {token: string | null}) {
   if (load.state === "invalid") return <section className="card stack"><h1>Invitación no disponible</h1><p>Este enlace no es válido, expiró, fue revocado o ya se usó. Pide uno nuevo a quien organiza la carrera.</p></section>;
   if (load.state === "retry") return <Retry message={load.message} onRetry={retry} />;
   if (load.state === "loading") return <p role="status">Abriendo invitación…</p>;
-  const {race} = load.value;
+  const {race, confirmed} = load.value;
   return (
     <section className="card stack">
       <p className="muted">Estás invitado a</p>
       <h1>{race.name}</h1>
       <p><strong>Salida:</strong> {race.start_label}</p>
       <p><strong>Horario:</strong> {formatWhen(race.starts_at)} – {formatWhen(race.ends_at)}</p>
+      {token && <ConfirmButton token={token} confirmed={confirmed} />}
       {token && <HelpButtons token={token} />}
       {race.checkpoints ? <GuestCheckpoints pins={race.checkpoints} />
         : <p className="notice" role="status">Los checkpoints se publican a las {formatRelease(race.checkpoints_release_at)}. Deja esta página abierta: aparecerán solos.</p>}
-      <p className="notice">El registro de corredores llegará en una próxima versión. Guarda este enlace.</p>
+      <p className="notice">Para registrar tu visita a un checkpoint, escanea su QR con la cámara de este teléfono estando ahí (a menos de 50 m). Guarda este enlace.</p>
     </section>
+  );
+}
+
+function ConfirmButton({token, confirmed}: {token: string; confirmed: boolean}) {
+  const [done, setDone] = useState(confirmed);
+  const [error, setError] = useState("");
+  const [busy, guard] = useBusy();
+  const send = () => guard(async () => {
+    setError("");
+    try {
+      await request(`/invite/${encodeURIComponent(token)}/confirm`, {method: "POST"});
+      setDone(true);
+    } catch (e) { setError(errorText(e)); }
+  });
+  if (done) return <p className="notice" role="status">Participación confirmada. ¡Nos vemos en la salida!</p>;
+  return (
+    <div className="stack">
+      <button className="btn-primary" disabled={busy} onClick={send}>Confirmo que participo</button>
+      {error && <p className="error" role="alert">{error}</p>}
+    </div>
   );
 }
 

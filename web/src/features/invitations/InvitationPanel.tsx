@@ -3,8 +3,8 @@ import {ApiError, errorText, fieldErrors, request, type Invitation, type Invitat
 import {formatWhen} from "../races/mapUtils";
 import {useBusy} from "../../useBusy";
 
-const STATE_LABEL: Record<InvitationState, string> = {sent: "Enviada", opened: "Abierta", expired: "Expirada", revoked: "Revocada", used: "Usada"};
-const isActive = (inv: Invitation) => inv.state === "sent" || inv.state === "opened";
+const STATE_LABEL: Record<InvitationState, string> = {sent: "Enviada", opened: "Abierta", confirmed: "Confirmada", expired: "Expirada", revoked: "Revocada", used: "Usada"};
+const isActive = (inv: Invitation) => inv.state === "sent" || inv.state === "opened" || inv.state === "confirmed";
 
 function CopyLink({link}: {link: string}) {
   const [copied, setCopied] = useState(false);
