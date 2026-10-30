@@ -1,6 +1,6 @@
 import {useEffect, useState} from "react";
 import QRCode from "qrcode";
-import {errorText, request, type Checkpoint, type CheckInRecord, type HelpKind, type HelpRequest, type Race} from "../../api/client";
+import {errorText, request, type Checkpoint, type CheckInRecord, type HelpKind, type HelpRequest, type Race, type Rider} from "../../api/client";
 import {formatTime, formatWhen, pinsForDisplay} from "./mapUtils";
 import {useBusy} from "../../useBusy";
 
@@ -54,10 +54,12 @@ function CheckpointQr({pin, raceName}: {pin: Checkpoint; raceName: string}) {
 }
 
 /** Organizer's race-day view: help requests first, then who reached which checkpoint, then the checkpoint QRs. */
-export function RaceDay({race}: {race: Race}) {
+export function RaceDay({race, onChanged}: {race: Race; onChanged: (race: Race) => void}) {
   const [help, setHelp] = useState<HelpRequest[]>([]);
   const [visits, setVisits] = useState<CheckInRecord[]>([]);
   const [pins, setPins] = useState<Checkpoint[]>([]);
+  const [riders, setRiders] = useState<Rider[]>([]);
+  const [choice, setChoice] = useState("");
   const [error, setError] = useState("");
   const [busy, guard] = useBusy();
   const load = () => Promise.all([
@@ -65,6 +67,7 @@ export function RaceDay({race}: {race: Race}) {
   ]).then(([h, v]) => { setHelp(h); setVisits(v); setError(""); }, e => setError(errorText(e)));
   useEffect(() => {
     request<Checkpoint[]>(`/races/${race.id}/checkpoints`).then(setPins, e => setError(errorText(e)));
+    request<Rider[]>(`/races/${race.id}/riders`).then(setRiders, e => setError(errorText(e)));
     load();
     const timer = setInterval(load, POLL_MS);
     return () => clearInterval(timer);
@@ -73,6 +76,18 @@ export function RaceDay({race}: {race: Race}) {
   const resolve = (id: number) => guard(async () => {
     try { await request(`/help/${id}/resolve`, {method: "POST"}); await load(); } catch (e) { setError(errorText(e)); }
   });
+  const reached = (id: number) => visits.filter(v => v.rider_id === id).length;
+  const winner = riders.find(r => r.id === race.winner_rider_id);
+  const setWinner = (riderId: number | null) => {
+    const rider = riders.find(r => r.id === riderId);
+    if (rider && !window.confirm(`¿Marcar a ${rider.name} como ganador? Lleva ${reached(rider.id)}/${pins.length} checkpoints.`)) return;
+    guard(async () => {
+      try {
+        onChanged(await request<Race>(`/races/${race.id}/winner`, {method: "PUT", json: {rider_id: riderId}}));
+        setChoice("");
+      } catch (e) { setError(errorText(e)); }
+    });
+  };
   return (
     <section className="card stack" aria-labelledby="raceday-title">
       <div className="row spread">
@@ -104,6 +119,26 @@ export function RaceDay({race}: {race: Race}) {
             {here.map(v => `${v.rider} ${formatTime(v.checked_in_at)}`).join(", ")}</span></li>;
         })}
       </ul>
+      <h3>Ganador</h3>
+      {winner ? (
+        <div className="row spread">
+          <p className="notice" role="status"><strong>{winner.name}</strong> es el ganador ({reached(winner.id)}/{pins.length} checkpoints).</p>
+          <button className="btn-secondary" disabled={busy} onClick={() => setWinner(null)}>Quitar ganador</button>
+        </div>
+      ) : (
+        <form className="row" onSubmit={e => { e.preventDefault(); if (choice) setWinner(Number(choice)); }}>
+          <label className="grow">Corredor que llegó a la meta
+            <select value={choice} onChange={e => setChoice(e.target.value)}>
+              <option value="">Elige al corredor</option>
+              {[...riders].sort((a, b) => reached(b.id) - reached(a.id)).map(r => (
+                <option key={r.id} value={r.id}>{r.name} · {reached(r.id)}/{pins.length} checkpoints</option>
+              ))}
+            </select>
+          </label>
+          <button className="btn-primary" disabled={busy || !choice}>Marcar ganador</button>
+        </form>
+      )}
+      <p className="muted">En la meta no hay QR: revisa que tenga todos sus checkpoints y márcalo aquí. Aparecerá en el tablero.</p>
       <h3>QR de checkpoints</h3>
       <p className="muted">«Enviar imagen» abre el menú de compartir del teléfono para mandarlo por WhatsApp a la persona del checkpoint; en computadora descarga la imagen. El corredor lo escanea con la cámara y debe estar a menos de 50 m del checkpoint.</p>
       <div className="qr-grid">{pinsForDisplay(pins).map(pin => <CheckpointQr key={pin.id} pin={pin} raceName={race.name} />)}</div>

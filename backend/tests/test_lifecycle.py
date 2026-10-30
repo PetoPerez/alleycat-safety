@@ -30,7 +30,8 @@ from app.routers.live import (CheckInIn, HelpIn, PositionIn, ask_help, board, ch
                               report_position, resolve_help)
 from app.services.races import distance_m
 from app.routers.races import (CheckpointIn, RaceIn, RiderIn, add_checkpoint, checkpoints, create_race, create_rider,
-                               delete_checkpoint, delete_race, edit_race, get_race, list_riders, publish, release_checkpoints)
+                               delete_checkpoint, delete_race, edit_race, get_race, list_riders, publish, release_checkpoints,
+                               WinnerIn, set_winner)
 from app.security import token_hash
 from app.services import mailer
 
@@ -744,3 +745,19 @@ def test_rider_confirms_participation_from_the_invitation(db):
     assert list_invitations(race.id, admin, db)[0]["state"] == "confirmed"
     revoke(created["id"], admin, db)
     assert status_of(confirm, token, db).status_code == 404
+
+
+def test_organizer_marks_and_clears_the_winner_and_can_still_delete_the_race(db, clock):
+    admin = new_admin(db, "winner@example.test")
+    race = published_race(db, admin, "Winner")
+    other = published_race(db, admin, "Other")
+    rider = create_rider(race.id, RiderIn(name="Fast", phone="+5255"), admin, db)
+    stranger = create_rider(other.id, RiderIn(name="Elsewhere", phone="+5256"), admin, db)
+    assert status_of(set_winner, race.id, WinnerIn(rider_id=stranger.id), admin, db).status_code == 404
+    assert set_winner(race.id, WinnerIn(rider_id=rider.id), admin, db).winner_rider_id == rider.id
+    assert board(race.id, admin, db)["race"]["winner_rider_id"] == rider.id
+    assert set_winner(race.id, WinnerIn(rider_id=None), admin, db).winner_rider_id is None
+    set_winner(race.id, WinnerIn(rider_id=rider.id), admin, db)
+    clock(race.ends_at)
+    delete_race(race.id, admin, db)  # the winner reference must not block deleting its rider
+    assert status_of(get_race, race.id, admin, db).status_code == 404

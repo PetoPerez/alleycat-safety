@@ -38,6 +38,8 @@ class Race(Base):
     status: Mapped[str] = mapped_column(String, default="draft")
     checkpoints_release_minutes: Mapped[int] = mapped_column(Integer, default=10, server_default="10")
     checkpoints_released_at: Mapped[datetime | None] = mapped_column(UTCDateTime, nullable=True)  # "release now"; never cleared
+    # Chosen by the organizers at the finish line, after checking the rider's checkpoints; not computed.
+    winner_rider_id: Mapped[int | None] = mapped_column(ForeignKey("riders.id", use_alter=True), nullable=True)
 
     @property
     def checkpoints_release_at(self) -> datetime:

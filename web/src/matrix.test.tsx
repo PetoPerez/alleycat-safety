@@ -635,6 +635,15 @@ describe("race-day board", () => {
     await render(<App />);
     expect(text()).toContain("AUXILIO · Emergencia médica");
     expect(document.querySelectorAll("td.hit")).toHaveLength(4);
+    const podium = [...document.querySelectorAll(".board-podium li")].map(li => li.textContent);
+    expect(podium).toHaveLength(2); // Ana has no checkpoints yet, so she is not on the podium
+    expect(podium[0]).toContain("Zoe");
+    expect(podium[0]).toContain("Líder virtual");
+    expect(text()).not.toContain("Ganador:");
+    await cleanup();
+    mockApi({"GET /races/1/board": {body: {...data, race: {...data.race, winner_rider_id: 3}}}});
+    await render(<App />);
+    expect(text()).toContain("Ganador: Beto"); // the organizers' call, even though Zoe leads on checkpoints
     await cleanup();
     mockApi({"GET /races/1/board": {status: 401, body: {detail: "Organizer authentication required"}}});
     await render(<App />);

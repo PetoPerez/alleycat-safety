@@ -20,6 +20,10 @@ class RaceIn(BaseModel):
     checkpoints_release_minutes: int = 10
 
 
+class WinnerIn(BaseModel):
+    rider_id: int | None  # null clears the winner
+
+
 class CheckpointIn(BaseModel):
     name: str
     description: str | None = None
@@ -49,6 +53,7 @@ class RaceOut(Out):
     checkpoints_release_minutes: int
     checkpoints_release_at: datetime
     checkpoints_released: bool
+    winner_rider_id: int | None
 
 
 class CheckpointOut(Out):
@@ -172,6 +177,8 @@ def delete_race(race_id: int, account=Depends(organizer), db: Session = Depends(
     invitations = db.query(Invitation.id).filter_by(race_id=race_id)
     riders = db.query(Rider.id).filter_by(race_id=race_id)
     # Children first: the foreign keys have no ON DELETE CASCADE.
+    race.winner_rider_id = None
+    db.flush()
     for query in (db.query(CheckIn).filter(CheckIn.checkpoint_id.in_(pins) | CheckIn.rider_id.in_(riders)),
                   db.query(InvitationEvent).filter(InvitationEvent.invitation_id.in_(invitations)),
                   db.query(Invitation).filter_by(race_id=race_id), db.query(RiderPosition).filter_by(race_id=race_id),
@@ -220,6 +227,21 @@ def publish(race_id: int, account=Depends(organizer), db: Session = Depends(get_
     if not race_service.publishable(db.query(Checkpoint).filter_by(race_id=race.id, active=True).count()):
         raise HTTPException(422, "Add at least one checkpoint before publishing")
     race.status = "published"
+    db.commit()
+    db.refresh(race)
+    return race
+
+
+@router.put("/races/{race_id}/winner", response_model=RaceOut)
+def set_winner(race_id: int, body: WinnerIn, account=Depends(organizer), db: Session = Depends(get_db)):
+    race = race_for(race_id, account, db)
+    if race.status != "published":
+        raise HTTPException(422, "Publish race before choosing a winner")
+    if body.rider_id is not None:
+        rider = db.get(Rider, body.rider_id)
+        if not rider or rider.race_id != race.id:
+            raise HTTPException(404, "Rider not found")
+    race.winner_rider_id = body.rider_id
     db.commit()
     db.refresh(race)
     return race

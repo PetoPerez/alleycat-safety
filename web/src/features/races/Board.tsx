@@ -7,7 +7,7 @@ const POLL_MS = 10_000;
 const FRESH_MS = 2 * 60_000; // arrivals this recent are highlighted so the room notices them
 
 type BoardData = {
-  race: {id: number; name: string; starts_at: string; ends_at: string};
+  race: {id: number; name: string; starts_at: string; ends_at: string; winner_rider_id: number | null};
   checkpoints: {id: number; name: string}[];
   riders: {id: number; name: string}[];
   checkins: {rider_id: number; checkpoint_id: number; checked_in_at: string}[];
@@ -41,6 +41,8 @@ export function Board({raceId}: {raceId: string | null}) {
   if (error === "login") return <section className="card stack"><h1>Inicia sesión</h1><p>El tablero es solo para organizadores.</p><a className="btn-primary" href="/">Iniciar sesión</a></section>;
   if (!data) return error ? <p className="error" role="alert">{error}</p> : <p role="status">Cargando tablero…</p>;
   const rows = standings(data);
+  const winner = data.riders.find(r => r.id === data.race.winner_rider_id);
+  const podium = rows.filter(r => r.visits.size).slice(0, 3); // nobody leads with zero checkpoints
   const arrived = (id: number) => data.checkins.filter(c => c.checkpoint_id === id).length;
   return (
     <div className="board">
@@ -60,6 +62,19 @@ export function Board({raceId}: {raceId: string | null}) {
           ))}
         </ul>
       )}
+      {winner && <p className="board-winner" role="status">Ganador: {winner.name}</p>}
+      {podium.length > 0 && (
+        <ol className="board-podium" aria-label="Más checkpoints">
+          {podium.map(({rider, visits, last}, i) => (
+            <li key={rider.id} className={i === 0 ? "leader" : ""}>
+              <span className="board-place">{i + 1}º</span>
+              <strong className="board-name">{rider.name}</strong>
+              <span>{visits.size}/{data.checkpoints.length} checkpoints · último {formatTime(last)}</span>
+              {i === 0 && <span className="board-crown">Líder virtual</span>}
+            </li>
+          ))}
+        </ol>
+      )}
       <div className="board-scroll">
         <table className="board-table">
           <thead>
@@ -71,7 +86,7 @@ export function Board({raceId}: {raceId: string | null}) {
           </thead>
           <tbody>
             {rows.map(({rider, visits}, i) => (
-              <tr key={rider.id}>
+              <tr key={rider.id} className={i === 0 && visits.size ? "leader" : undefined}>
                 <td>{i + 1}</td>
                 <td className="board-name">{rider.name}</td>
                 {data.checkpoints.map(p => {

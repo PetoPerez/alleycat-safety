@@ -345,7 +345,7 @@ function Dashboard({me}: {me: Me}) {
         <Fragment key={selected.id}>{/* remount per race: no state leaks between races */}
           <RaceEditor race={selected} onChanged={replace} />
           <InvitationPanel raceId={selected.id} published={selected.status === "published"} />
-          {selected.status === "published" && <RaceDay race={selected} />}
+          {selected.status === "published" && <RaceDay race={selected} onChanged={replace} />}
         </Fragment>
       )}
       {me.role === "superadmin" && <AdminPanel />}
