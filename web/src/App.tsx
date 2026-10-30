@@ -7,23 +7,26 @@ import {InvitationPanel} from "./features/invitations/InvitationPanel";
 import {AdminPanel} from "./features/admin/AdminPanel";
 import {useBusy} from "./useBusy";
 import {HELP_LABEL, RaceDay} from "./features/races/RaceDay";
+import {Board} from "./features/races/Board";
 import {formatRelease, formatTime, formatWhen, pinsForDisplay} from "./features/races/mapUtils";
 
 /** token null = malformed link: show the safe invalid state without calling the API. */
-export type Route = {view: "invite" | "consume" | "checkin"; token: string | null} | {view: "app"};
+export type Route = {view: "invite" | "consume" | "checkin" | "board"; token: string | null} | {view: "app"};
 
 /** Page loads only: these GETs are SPA routes; the API answers the matching POSTs. */
 export function route(pathname: string): Route {
-  const match = pathname.match(/^\/(invite|auth\/consume|checkin)\/([^/]+)\/?$/);
+  const match = pathname.match(/^\/(invite|auth\/consume|checkin|tablero)\/([^/]+)\/?$/);
   if (!match) return {view: "app"};
   let token: string | null = null;
   try { token = decodeURIComponent(match[2]); } catch { /* malformed escape */ }
-  return {view: match[1] === "auth/consume" ? "consume" : match[1] as "invite" | "checkin", token};
+  const view = match[1] === "auth/consume" ? "consume" : match[1] === "tablero" ? "board" : match[1] as "invite" | "checkin";
+  return {view, token};
 }
 
 export function App() {
   const [current, setCurrent] = useState(() => route(location.pathname));
   const goHome = () => { history.replaceState(null, "", "/"); setCurrent({view: "app"}); };
+  if (current.view === "board") return <main className="wide"><Board raceId={current.token} /></main>;
   return (
     <main>
       <header className="brand"><a href="/">Alleycat Safety</a></header>
@@ -41,19 +44,19 @@ type InviteSummary = {race: {name: string; start_label: string; starts_at: strin
 const REFRESH_MS = 30_000;
 const RETRY_MS = 5_000; // after a failed refresh, so a blip doesn't push the next try a full cycle away
 /** stale: the last refresh failed on the network, so `value` is the previous good answer. */
-type Load<T> = {state: "loading"} | {state: "ok"; value: T; stale?: boolean} | {state: "invalid"; message?: string} | {state: "retry"; message: string};
+type Load<T> = {state: "loading"} | {state: "ok"; value: T; stale?: boolean} | {state: "invalid"} | {state: "retry"; message: string};
 
 /** POSTs a link token once per attempt. 4xx = safe invalid state; network/5xx = retry, not "invalid". */
-function useTokenPost<T>(path: string | null, onOk?: (value: T) => void, json?: unknown) {
+function useTokenPost<T>(path: string | null, onOk?: (value: T) => void) {
   const [attempt, setAttempt] = useState(0);
   const [load, setLoad] = useState<Load<T>>(path ? {state: "loading"} : {state: "invalid"});
   useEffect(() => {
     if (!path) return;
     setLoad(prev => (prev.state === "ok" ? prev : {state: "loading"})); // refreshes keep showing the last value
-    request<T>(path, {method: "POST", json}).then(
+    request<T>(path, {method: "POST"}).then(
       value => { setLoad({state: "ok", value}); onOk?.(value); },
       error => setLoad(prev => error instanceof ApiError && error.status >= 400 && error.status < 500
-        ? {state: "invalid", message: error.message} : prev.state === "ok" ? {...prev, stale: true} : {state: "retry", message: errorText(error)}),
+        ? {state: "invalid"} : prev.state === "ok" ? {...prev, stale: true} : {state: "retry", message: errorText(error)}),
     );
   }, [path, attempt]); // eslint-disable-line react-hooks/exhaustive-deps
   return [load, () => setAttempt(n => n + 1)] as const;
@@ -136,21 +139,50 @@ function HelpButtons({token}: {token: string}) {
 }
 
 type CheckInResult = {checkpoint: string; checked_in_at: string};
+type CheckIn = {state: "locating"} | {state: "sending"} | {state: "ok"; value: CheckInResult} | {state: "failed"; message: string};
 
-/** Opened by the phone camera from a checkpoint QR; the rider is identified by the invitation opened earlier on this phone. */
+/** Opened by the phone camera from a checkpoint QR. The rider is identified by the invitation opened earlier on
+ *  this phone, and the server only accepts the scan if the phone's position is next to the checkpoint. */
 export function CheckInView({code}: {code: string | null}) {
   const token = remembered();
-  const [load, retry] = useTokenPost<CheckInResult>(code && token ? `/invite/${encodeURIComponent(token)}/checkins` : null, undefined,
-    {code});
+  const [attempt, setAttempt] = useState(0);
+  const [result, setResult] = useState<CheckIn>({state: "locating"});
+  useEffect(() => {
+    if (!code || !token) return;
+    let live = true;
+    setResult({state: "locating"});
+    currentPosition().then(async coords => {
+      if (!live) return;
+      if (!coords) return setResult({state: "failed", message: "No se pudo obtener tu ubicación. Activa el GPS y permite la ubicación al navegador."});
+      setResult({state: "sending"});
+      try {
+        const value = await request<CheckInResult>(`/invite/${encodeURIComponent(token)}/checkins`, {method: "POST",
+          json: {code, latitude: coords.latitude, longitude: coords.longitude}});
+        if (live) setResult({state: "ok", value});
+      } catch (e) {
+        if (live) setResult({state: "failed", message: errorText(e)});
+      }
+    });
+    return () => { live = false; };
+  }, [code, token, attempt]);
+  const back = token && <a className="btn-secondary" href={`/invite/${encodeURIComponent(token)}`}>Volver a mi invitación</a>;
   if (!token) return <section className="card stack"><h1>Abre primero tu invitación</h1><p>Abre en este teléfono el enlace de invitación que te enviaron y vuelve a escanear el QR del checkpoint.</p></section>;
-  if (load.state === "retry") return <Retry message={load.message} onRetry={retry} />;
-  if (load.state === "loading") return <p role="status">Registrando checkpoint…</p>;
-  if (load.state === "invalid") return <section className="card stack"><h1>No se pudo registrar</h1><p>{load.message ?? "Este QR no es válido para tu carrera."}</p><a className="btn-secondary" href={`/invite/${encodeURIComponent(token)}`}>Volver a mi invitación</a></section>;
+  if (!code) return <section className="card stack"><h1>QR no válido</h1><p>Este QR no es válido para tu carrera.</p>{back}</section>;
+  if (result.state === "locating") return <p role="status">Obteniendo tu ubicación…</p>;
+  if (result.state === "sending") return <p role="status">Registrando checkpoint…</p>;
+  if (result.state === "failed") return (
+    <section className="card stack">
+      <h1>No se pudo registrar</h1>
+      <p className="error" role="alert">{result.message}</p>
+      <button className="btn-primary" onClick={() => setAttempt(n => n + 1)}>Reintentar</button>
+      {back}
+    </section>
+  );
   return (
     <section className="card stack">
       <h1>Checkpoint registrado</h1>
-      <p><strong>{load.value.checkpoint}</strong> a las {formatTime(load.value.checked_in_at)}.</p>
-      <a className="btn-primary" href={`/invite/${encodeURIComponent(token)}`}>Volver a mi invitación</a>
+      <p><strong>{result.value.checkpoint}</strong> a las {formatTime(result.value.checked_in_at)}.</p>
+      {back}
     </section>
   );
 }

@@ -1,0 +1,91 @@
+import {useEffect, useState} from "react";
+import {ApiError, errorText, request, type HelpRequest} from "../../api/client";
+import {formatTime} from "./mapUtils";
+import {HELP_LABEL} from "./RaceDay";
+
+const POLL_MS = 10_000;
+const FRESH_MS = 2 * 60_000; // arrivals this recent are highlighted so the room notices them
+
+type BoardData = {
+  race: {id: number; name: string; starts_at: string; ends_at: string};
+  checkpoints: {id: number; name: string}[];
+  riders: {id: number; name: string}[];
+  checkins: {rider_id: number; checkpoint_id: number; checked_in_at: string}[];
+  help: HelpRequest[];
+};
+
+/** Most checkpoints first; ties go to whoever reached their last checkpoint earlier. */
+export function standings(data: BoardData) {
+  return data.riders.map(rider => {
+    const visits = new Map(data.checkins.filter(c => c.rider_id === rider.id).map(c => [c.checkpoint_id, c.checked_in_at]));
+    const last = [...visits.values()].sort().pop() ?? "";
+    return {rider, visits, last};
+  }).sort((a, b) => b.visits.size - a.visits.size || a.last.localeCompare(b.last) || a.rider.name.localeCompare(b.rider.name));
+}
+
+/** Read-only race-day screen for a projector or TV: arrivals per checkpoint and open help requests. */
+export function Board({raceId}: {raceId: string | null}) {
+  const [data, setData] = useState<BoardData>();
+  const [error, setError] = useState("");
+  const [now, setNow] = useState(Date.now());
+  useEffect(() => {
+    if (!raceId) return;
+    const load = () => request<BoardData>(`/races/${encodeURIComponent(raceId)}/board`).then(
+      value => { setData(value); setError(""); },
+      e => setError(e instanceof ApiError && e.status === 401 ? "login" : errorText(e)));
+    load();
+    const poll = setInterval(load, POLL_MS);
+    const clock = setInterval(() => setNow(Date.now()), 1000);
+    return () => { clearInterval(poll); clearInterval(clock); };
+  }, [raceId]);
+  if (error === "login") return <section className="card stack"><h1>Inicia sesión</h1><p>El tablero es solo para organizadores.</p><a className="btn-primary" href="/">Iniciar sesión</a></section>;
+  if (!data) return error ? <p className="error" role="alert">{error}</p> : <p role="status">Cargando tablero…</p>;
+  const rows = standings(data);
+  const arrived = (id: number) => data.checkins.filter(c => c.checkpoint_id === id).length;
+  return (
+    <div className="board">
+      <header className="board-head">
+        <div>
+          <h1>{data.race.name}</h1>
+          <p className="muted">{formatTime(data.race.starts_at)} – {formatTime(data.race.ends_at)} · {data.riders.length} corredores · {data.checkins.length} llegadas</p>
+        </div>
+        <div className="board-clock">{new Date(now).toLocaleTimeString("es")}</div>
+        <button className="btn-secondary" onClick={() => document.documentElement.requestFullscreen?.()}>Pantalla completa</button>
+      </header>
+      {error && <p className="error" role="alert">Sin conexión: mostrando los últimos datos. {error}</p>}
+      {data.help.length > 0 && (
+        <ul className="board-help" role="alert">
+          {data.help.map(h => (
+            <li key={h.id}><strong>AUXILIO · {HELP_LABEL[h.kind]}</strong> {h.rider}{h.phone && ` · ${h.phone}`} · {formatTime(h.created_at)}</li>
+          ))}
+        </ul>
+      )}
+      <div className="board-scroll">
+        <table className="board-table">
+          <thead>
+            <tr>
+              <th>#</th><th>Corredor</th>
+              {data.checkpoints.map(p => <th key={p.id}>{p.name}<span className="muted"> {arrived(p.id)}/{data.riders.length}</span></th>)}
+              <th>Total</th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map(({rider, visits}, i) => (
+              <tr key={rider.id}>
+                <td>{i + 1}</td>
+                <td className="board-name">{rider.name}</td>
+                {data.checkpoints.map(p => {
+                  const at = visits.get(p.id);
+                  const fresh = at && now - new Date(at).getTime() < FRESH_MS;
+                  return <td key={p.id} className={at ? `hit${fresh ? " fresh" : ""}` : "miss"}>{at ? formatTime(at) : "—"}</td>;
+                })}
+                <td className="board-total">{visits.size}/{data.checkpoints.length}</td>
+              </tr>
+            ))}
+            {!rows.length && <tr><td colSpan={data.checkpoints.length + 3} className="muted">Aún no hay corredores invitados.</td></tr>}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}

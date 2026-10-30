@@ -44,6 +44,7 @@ const MESSAGES: Record<string, string> = {
   "Release minutes must be between 0 and 1440": "Indica entre 0 y 1440 minutos.",
   "Publish race before releasing checkpoints": "Publica la carrera antes de liberar los checkpoints.",
   "Race is not in progress": "La carrera no está en curso.",
+  "Too far from the checkpoint": "Estás demasiado lejos del checkpoint. Acércate y vuelve a intentarlo.",
   "Unknown help type": "Tipo de ayuda no válido.",
   "Help request not found": "No se encontró la solicitud de ayuda.",
 };

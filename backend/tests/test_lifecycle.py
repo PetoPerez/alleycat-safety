@@ -26,8 +26,9 @@ from app.models import Checkpoint, Invitation, MagicLink, Organizer, OrganizerSe
 from app.routers.admin import create_organizer, list_organizers
 from app.routers.auth import EmailIn, consume_magic_link, issue_magic_link, organizer, superadmin
 from app.routers.invitations import InviteIn, invite, list_invitations, open_invite, resend, revoke
-from app.routers.live import (CheckInIn, HelpIn, PositionIn, ask_help, check_in, checkins, help_requests, positions,
+from app.routers.live import (CheckInIn, HelpIn, PositionIn, ask_help, board, check_in, checkins, help_requests, positions,
                               report_position, resolve_help)
+from app.services.races import distance_m
 from app.routers.races import (CheckpointIn, RaceIn, RiderIn, add_checkpoint, checkpoints, create_race, create_rider,
                                delete_checkpoint, edit_race, get_race, publish, release_checkpoints)
 from app.services import mailer
@@ -574,6 +575,15 @@ def test_positions_only_while_live_latest_wins_and_owner_only(db, clock):
     assert status_of(report_position, token, PositionIn(latitude=19.4, longitude=-99.1), db).status_code == 404
 
 
+def at_pin(code, lat=19.41, lon=-99.11):
+    return CheckInIn(code=code, latitude=lat, longitude=lon)
+
+
+def test_distance_m_matches_known_offsets():
+    assert distance_m(19.41, -99.11, 19.41, -99.11) == 0
+    assert 110 < distance_m(19.41, -99.11, 19.411, -99.11) < 112  # 0.001° of latitude ≈ 111 m
+
+
 def test_checkpoint_qr_check_in_is_live_only_idempotent_and_race_scoped(db, clock):
     admin = new_admin(db, "checkin@example.test")
     other = new_admin(db, "checkin-other@example.test")
@@ -583,16 +593,46 @@ def test_checkpoint_qr_check_in_is_live_only_idempotent_and_race_scoped(db, cloc
     foreign = checkpoints(elsewhere.id, admin, db)[0].code
     _, token = invited(db, admin, race)
     clock(START - timedelta(minutes=1))
-    assert status_of(check_in, token, CheckInIn(code=code), db).status_code == 422
+    assert status_of(check_in, token, at_pin(code), db).status_code == 422
     clock(START + timedelta(minutes=5))
     for bad in (foreign, "nope"):
-        assert status_of(check_in, token, CheckInIn(code=bad), db).status_code == 404
-    assert check_in(token, CheckInIn(code=code), db) == {"checkpoint": "A", "checked_in_at": START + timedelta(minutes=5)}
+        assert status_of(check_in, token, at_pin(bad), db).status_code == 404
+    assert check_in(token, at_pin(code), db) == {"checkpoint": "A", "checked_in_at": START + timedelta(minutes=5)}
     clock(START + timedelta(minutes=9))
-    assert check_in(token, CheckInIn(code=code), db)["checked_in_at"] == START + timedelta(minutes=5)
+    assert check_in(token, at_pin(code), db)["checked_in_at"] == START + timedelta(minutes=5)
     assert [(c["rider"], c["checkpoint"]) for c in checkins(race.id, admin, db)] == [("Rider", "A")]
     assert status_of(checkins, race.id, other, db).status_code == 404
-    assert status_of(check_in, "unknown-token", CheckInIn(code=code), db).status_code == 404
+    assert status_of(check_in, "unknown-token", at_pin(code), db).status_code == 404
+
+
+def test_check_in_requires_being_within_radius_of_the_checkpoint(db, clock):
+    admin = new_admin(db, "radius@example.test")
+    race = published_race(db, admin, "Radius")
+    code = checkpoints(race.id, admin, db)[0].code
+    _, token = invited(db, admin, race)
+    clock(START + timedelta(minutes=5))
+    exc = status_of(check_in, token, at_pin(code, lat=19.4106), db)  # ~67 m north
+    assert exc.status_code == 422 and exc.detail == "Too far from the checkpoint"
+    assert checkins(race.id, admin, db) == []
+    assert check_in(token, at_pin(code, lat=19.4104), db)["checkpoint"] == "A"  # ~44 m
+
+
+def test_board_lists_invited_riders_checkins_and_open_help_only(db, clock):
+    admin = new_admin(db, "board@example.test")
+    race = published_race(db, admin, "Board")
+    pin = checkpoints(race.id, admin, db)[0]
+    _, token = invited(db, admin, race)
+    gone = create_rider(RiderIn(name="Gone", phone="+5257"), admin, db)
+    revoke(invite(race.id, InviteIn(rider_id=gone.id, channel="whatsapp"), admin, db)["id"], admin, db)
+    clock(START + timedelta(minutes=5))
+    check_in(token, at_pin(pin.code), db)
+    resolve_help(ask_help(token, HelpIn(kind="other"), db)["id"], admin, db)
+    ask_help(token, HelpIn(kind="medical"), db)
+    view = board(race.id, admin, db)
+    assert [r["name"] for r in view["riders"]] == ["Rider"]
+    assert view["checkpoints"] == [{"id": pin.id, "name": "A"}]
+    assert [(c["checkpoint_id"], c["checked_in_at"]) for c in view["checkins"]] == [(pin.id, START + timedelta(minutes=5))]
+    assert [h["kind"] for h in view["help"]] == ["medical"]
 
 
 def test_help_request_with_or_without_position_reaches_owner_and_resolves(db, clock):

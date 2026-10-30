@@ -7,14 +7,48 @@ import {useBusy} from "../../useBusy";
 const POLL_MS = 10_000;
 export const HELP_LABEL: Record<HelpKind, string> = {medical: "Emergencia médica", accident: "Accidente", mechanical: "Problema mecánico", other: "Otra ayuda"};
 
+const QR_PX = 640;
+const fileName = (name: string) => `checkpoint-${name.replace(/[^\p{L}\p{N}]+/gu, "-").toLowerCase()}.png`;
+
+/** PNG for WhatsApp: race and checkpoint names above the QR, so the volunteer knows which one they hold. */
+async function qrPng(raceName: string, pin: Checkpoint): Promise<Blob> {
+  const qr = document.createElement("canvas");
+  await QRCode.toCanvas(qr, `${location.origin}/checkin/${pin.code}`, {width: QR_PX, margin: 2});
+  const canvas = document.createElement("canvas");
+  canvas.width = QR_PX; canvas.height = QR_PX + 140;
+  const ctx = canvas.getContext("2d")!;
+  ctx.fillStyle = "#fff"; ctx.fillRect(0, 0, canvas.width, canvas.height);
+  ctx.fillStyle = "#000"; ctx.textAlign = "center";
+  ctx.font = "32px sans-serif"; ctx.fillText(raceName, QR_PX / 2, 50, QR_PX - 40);
+  ctx.font = "bold 48px sans-serif"; ctx.fillText(pin.name, QR_PX / 2, 115, QR_PX - 40);
+  ctx.drawImage(qr, 0, 140);
+  return new Promise((resolve, reject) => canvas.toBlob(b => (b ? resolve(b) : reject(new Error("png"))), "image/png"));
+}
+
 /** QR for the person staffing the checkpoint: scanning it opens /checkin/<code> on the rider's phone. */
-function CheckpointQr({pin}: {pin: Checkpoint}) {
+function CheckpointQr({pin, raceName}: {pin: Checkpoint; raceName: string}) {
   const [src, setSrc] = useState("");
+  const [error, setError] = useState("");
   useEffect(() => { QRCode.toDataURL(`${location.origin}/checkin/${pin.code}`, {width: 240}).then(setSrc, () => setSrc("")); }, [pin.code]);
+  // Phones get the share sheet (pick WhatsApp); desktops download the PNG to attach in WhatsApp Web.
+  const send = async () => {
+    setError("");
+    try {
+      const file = new File([await qrPng(raceName, pin)], fileName(pin.name), {type: "image/png"});
+      if (navigator.canShare?.({files: [file]})) return await navigator.share({files: [file], title: `Checkpoint ${pin.name}`});
+      const url = URL.createObjectURL(file);
+      Object.assign(document.createElement("a"), {href: url, download: file.name}).click();
+      URL.revokeObjectURL(url);
+    } catch (e) {
+      if (!(e instanceof DOMException && e.name === "AbortError")) setError("No se pudo generar la imagen.");
+    }
+  };
   return (
     <figure className="qr">
       {src && <img src={src} alt={`QR del checkpoint ${pin.name}`} width={160} height={160} />}
       <figcaption>{pin.name}</figcaption>
+      <button type="button" className="btn-secondary" onClick={send}>Enviar imagen</button>
+      {error && <p className="error" role="alert">{error}</p>}
     </figure>
   );
 }
@@ -41,7 +75,10 @@ export function RaceDay({race}: {race: Race}) {
   });
   return (
     <section className="card stack" aria-labelledby="raceday-title">
-      <h2 id="raceday-title">Día de carrera</h2>
+      <div className="row spread">
+        <h2 id="raceday-title">Día de carrera</h2>
+        <a className="btn-secondary" href={`/tablero/${race.id}`} target="_blank" rel="noreferrer">Abrir tablero en pantalla grande</a>
+      </div>
       {error && <p className="error" role="alert">{error}</p>}
       <h3>Solicitudes de auxilio</h3>
       <ul className="list">
@@ -68,8 +105,8 @@ export function RaceDay({race}: {race: Race}) {
         })}
       </ul>
       <h3>QR de checkpoints</h3>
-      <p className="muted">Imprime o envía cada QR a la persona del checkpoint. El corredor lo escanea con la cámara de su teléfono.</p>
-      <div className="qr-grid">{pinsForDisplay(pins).map(pin => <CheckpointQr key={pin.id} pin={pin} />)}</div>
+      <p className="muted">«Enviar imagen» abre el menú de compartir del teléfono para mandarlo por WhatsApp a la persona del checkpoint; en computadora descarga la imagen. El corredor lo escanea con la cámara y debe estar a menos de 50 m del checkpoint.</p>
+      <div className="qr-grid">{pinsForDisplay(pins).map(pin => <CheckpointQr key={pin.id} pin={pin} raceName={race.name} />)}</div>
     </section>
   );
 }

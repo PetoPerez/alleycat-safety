@@ -3,7 +3,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 from ..database import get_db, utcnow
-from ..models import Checkpoint, CheckIn, HelpRequest, Race, Rider, RiderPosition
+from ..models import Checkpoint, CheckIn, HelpRequest, Invitation, Race, Rider, RiderPosition
 from ..services import races as race_service
 from .auth import organizer
 from .invitations import active_invitation
@@ -20,6 +20,8 @@ class PositionIn(BaseModel):
 
 class CheckInIn(BaseModel):
     code: str
+    latitude: float
+    longitude: float
 
 
 class HelpIn(BaseModel):
@@ -53,6 +55,11 @@ def check_in(token: str, body: CheckInIn, db: Session = Depends(get_db)):
     checkpoint = db.query(Checkpoint).filter_by(code=body.code, race_id=race.id, active=True).first()
     if not checkpoint:
         raise HTTPException(404, "Checkpoint not found")
+    if not race_service.coordinates_valid(body.latitude, body.longitude):
+        raise HTTPException(422, "Invalid coordinates")
+    # The QR proves the code was seen; the position proves the rider was there, not sent a photo of it.
+    if race_service.distance_m(body.latitude, body.longitude, checkpoint.latitude, checkpoint.longitude) > race_service.CHECKIN_RADIUS_M:
+        raise HTTPException(422, "Too far from the checkpoint")
     existing = db.get(CheckIn, (checkpoint.id, item.rider_id))
     if not existing:
         existing = CheckIn(checkpoint_id=checkpoint.id, rider_id=item.rider_id, checked_in_at=now)
@@ -114,3 +121,21 @@ def resolve_help(help_id: int, account=Depends(organizer), db: Session = Depends
         item.resolved_at = utcnow()
         db.commit()
     return {"id": item.id, "resolved_at": item.resolved_at}
+
+
+@router.get("/races/{race_id}/board")
+def board(race_id: int, account=Depends(organizer), db: Session = Depends(get_db)):
+    """Everything the race-day screen shows, in one poll."""
+    race = race_for(race_id, account, db)
+    pins = db.query(Checkpoint).filter_by(race_id=race_id, active=True).order_by(Checkpoint.name).all()
+    visits = db.query(CheckIn).join(Checkpoint, Checkpoint.id == CheckIn.checkpoint_id).filter(Checkpoint.race_id == race_id).all()
+    # Revoked riders drop off the board unless they already reached a checkpoint.
+    rider_ids = {i.rider_id for i in db.query(Invitation).filter(Invitation.race_id == race_id, Invitation.delivery_status != "revoked")}
+    rider_ids |= {v.rider_id for v in visits}
+    riders = db.query(Rider).filter(Rider.id.in_(rider_ids)).all() if rider_ids else []
+    help_open = [h for h in help_requests(race_id, account, db) if not h["resolved_at"]]
+    return {"race": {"id": race.id, "name": race.name, "starts_at": race.starts_at, "ends_at": race.ends_at},
+            "checkpoints": [{"id": p.id, "name": p.name} for p in pins],
+            "riders": [{"id": r.id, "name": r.name} for r in riders],
+            "checkins": [{"rider_id": v.rider_id, "checkpoint_id": v.checkpoint_id, "checked_in_at": v.checked_in_at} for v in visits],
+            "help": help_open}

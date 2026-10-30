@@ -1,6 +1,7 @@
 // One jsdom test per I/O-matrix row of spec-web-ui-race-administration.md, with fetch mocked.
 import {afterEach, beforeEach, describe, expect, it, vi} from "vitest";
 import {App} from "./App";
+import {standings} from "./features/races/Board";
 import {act} from "react";
 import {formatRelease} from "./features/races/mapUtils";
 import {button, cleanup, click, field, flush, mockApi, render, submit, text, type} from "./test/dom";
@@ -543,17 +544,41 @@ describe("race day: checkpoint QR and help", () => {
     checkpoints_release_at: "2026-11-01T17:50:00Z"}, next: "later"};
   afterEach(() => { localStorage.clear(); });
 
-  it("a scanned QR checks in with the invitation opened earlier on this phone", async () => {
+  const gps = (coords: {latitude: number; longitude: number} | null) => Object.defineProperty(navigator, "geolocation", {configurable: true,
+    value: {getCurrentPosition: (ok: PositionCallback, fail: PositionErrorCallback) =>
+      coords ? ok({coords} as GeolocationPosition) : fail({code: 1} as GeolocationPositionError)}});
+  const openInvitation = async () => {
     mockApi({"POST /invite/tok": {body: summary}});
     at("/invite/tok");
     await render(<App />);
     await cleanup();
+  };
+
+  it("a scanned QR checks in with this phone's invitation and position", async () => {
+    await openInvitation();
+    gps({latitude: 19.41, longitude: -99.11});
     at("/checkin/qr1");
-    const calls = mockApi({"POST /invite/tok/checkins": {body: {checkpoint: "Fuente", checked_in_at: "2026-11-01T18:30:00Z"}}}).calls;
+    const {calls} = mockApi({"POST /invite/tok/checkins": {body: {checkpoint: "Fuente", checked_in_at: "2026-11-01T18:30:00Z"}}});
     await render(<App />);
-    expect(calls).toEqual([{key: "POST /invite/tok/checkins", body: {code: "qr1"}}]);
+    expect(calls).toEqual([{key: "POST /invite/tok/checkins", body: {code: "qr1", latitude: 19.41, longitude: -99.11}}]);
     expect(text()).toContain("Checkpoint registrado");
     expect(text()).toContain("Fuente");
+  });
+
+  it("a scan too far away is refused with a retry, and no GPS means nothing is sent", async () => {
+    await openInvitation();
+    gps({latitude: 19.5, longitude: -99.11});
+    at("/checkin/qr1");
+    mockApi({"POST /invite/tok/checkins": {status: 422, body: {detail: "Too far from the checkpoint"}}});
+    await render(<App />);
+    expect(text()).toContain("Estás demasiado lejos del checkpoint");
+    button("Reintentar");
+    await cleanup();
+    gps(null);
+    const {calls} = mockApi({});
+    await render(<App />);
+    expect(calls).toEqual([]);
+    expect(text()).toContain("No se pudo obtener tu ubicación");
   });
 
   it("a QR scanned without an opened invitation asks to open it first and calls nothing", async () => {
@@ -574,5 +599,35 @@ describe("race day: checkpoint QR and help", () => {
     await click(button("Problema mecánico"));
     expect(calls.at(-1)).toEqual({key: "POST /invite/tok/help", body: {kind: "mechanical", latitude: 19.4, longitude: -99.1}});
     expect(text()).toContain("Solicitud enviada con tu ubicación");
+  });
+});
+
+describe("race-day board", () => {
+  afterEach(cleanup);
+  const data = {
+    race: {id: 1, name: "Noche", starts_at: "2026-11-01T18:00:00Z", ends_at: "2026-11-01T21:00:00Z"},
+    checkpoints: [{id: 11, name: "A"}, {id: 12, name: "B"}],
+    riders: [{id: 1, name: "Zoe"}, {id: 2, name: "Ana"}, {id: 3, name: "Beto"}],
+    checkins: [
+      {rider_id: 1, checkpoint_id: 11, checked_in_at: "2026-11-01T18:20:00Z"}, {rider_id: 1, checkpoint_id: 12, checked_in_at: "2026-11-01T18:40:00Z"},
+      {rider_id: 3, checkpoint_id: 11, checked_in_at: "2026-11-01T18:10:00Z"}, {rider_id: 3, checkpoint_id: 12, checked_in_at: "2026-11-01T18:50:00Z"},
+    ],
+    help: [{id: 9, rider: "Ana", phone: "+5255", kind: "medical", latitude: null, longitude: null, created_at: "2026-11-01T18:45:00Z", resolved_at: null}],
+  };
+
+  it("ranks by checkpoints reached, then by who reached the last one first", () => {
+    expect(standings(data as never).map(r => r.rider.name)).toEqual(["Zoe", "Beto", "Ana"]);
+  });
+
+  it("shows the grid and open help, and asks to log in without a session", async () => {
+    mockApi({"GET /races/1/board": {body: data}});
+    at("/tablero/1");
+    await render(<App />);
+    expect(text()).toContain("AUXILIO · Emergencia médica");
+    expect(document.querySelectorAll("td.hit")).toHaveLength(4);
+    await cleanup();
+    mockApi({"GET /races/1/board": {status: 401, body: {detail: "Organizer authentication required"}}});
+    await render(<App />);
+    expect(text()).toContain("El tablero es solo para organizadores");
   });
 });

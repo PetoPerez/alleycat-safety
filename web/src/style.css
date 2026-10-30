@@ -73,8 +73,27 @@ details[open] > summary { margin-bottom: var(--space-md); }
 .qr img { display: block; background: #fff; padding: 8px; border-radius: 8px; }
 .help-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(9rem, 1fr)); gap: var(--space-sm); }
 
+/* Race-day board: read from across a room on a TV or projector. */
+main.wide { max-width: none; }
+.board { display: grid; gap: var(--space-lg); font-size: clamp(1rem, 1.4vw, 1.6rem); }
+.board-head { display: flex; flex-wrap: wrap; gap: var(--space-md); align-items: center; justify-content: space-between; }
+.board-head h1 { font-size: 2em; color: var(--color-primary); }
+.board-clock { font-size: 2.2em; font-weight: 700; font-variant-numeric: tabular-nums; }
+.board-help { list-style: none; margin: 0; padding: 0; display: grid; gap: var(--space-sm); }
+.board-help li { background: var(--color-destructive); color: var(--color-on-destructive); padding: var(--space-md); border-radius: 8px; font-size: 1.2em; animation: pulse 1.5s ease-in-out infinite; }
+.board-scroll { overflow-x: auto; }
+.board-table { width: 100%; border-collapse: separate; border-spacing: 4px; font-variant-numeric: tabular-nums; }
+.board-table th { text-align: left; padding: var(--space-sm); color: var(--color-muted-foreground); font-weight: 600; white-space: nowrap; }
+.board-table td { padding: var(--space-sm) var(--space-md); border-radius: 6px; background: var(--color-card); white-space: nowrap; }
+.board-table td.hit { background: var(--color-accent); color: var(--color-on-accent); font-weight: 700; }
+.board-table td.fresh { animation: pulse 1.5s ease-in-out infinite; }
+.board-table td.miss { color: var(--color-muted-foreground); }
+.board-name { font-weight: 700; }
+.board-total { font-weight: 700; color: var(--color-primary); }
+@keyframes pulse { 50% { opacity: .55; } }
+
 .checkpoint-map { height: 320px; width: 100%; border-radius: 8px; }
 .leaflet-container { font: inherit; color: #000; }
 
-@media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
+@media (prefers-reduced-motion: reduce) { * { transition: none !important; animation: none !important; } }
 .chosen-spot { background: var(--color-primary); border: 3px solid #fff; border-radius: 50%; box-shadow: 0 0 0 2px var(--color-primary); }
