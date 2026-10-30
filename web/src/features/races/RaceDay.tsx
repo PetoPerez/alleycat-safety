@@ -77,7 +77,7 @@ export function RaceDay({race}: {race: Race}) {
     <section className="card stack" aria-labelledby="raceday-title">
       <div className="row spread">
         <h2 id="raceday-title">Día de carrera</h2>
-        <a className="btn-secondary" href={`/tablero/${race.id}`} target="_blank" rel="noreferrer">Abrir tablero en pantalla grande</a>
+        <a className="btn-secondary" href={`/tablero/${race.id}`} target="_blank" rel="noreferrer">Tablero</a>
       </div>
       {error && <p className="error" role="alert">{error}</p>}
       <h3>Solicitudes de auxilio</h3>
