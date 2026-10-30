@@ -75,6 +75,21 @@ export function InvitationPanel({raceId, published}: {raceId: number; published:
     });
   };
 
+  const [rowErrors, setRowErrors] = useState<string[]>([]);
+  const importSheet = (file: File | undefined) => file && guard(async () => {
+    setRowErrors([]); setNotice(undefined);
+    try {
+      const {added, skipped} = await request<{added: number; skipped: number}>(`/races/${raceId}/riders/import`, {method: "POST", body: file,
+        headers: {"Content-Type": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"}});
+      await refresh();
+      setNotice({text: `Se añadieron ${added} corredores al padrón${skipped ? `; ${skipped} ya estaban (mismo email o teléfono)` : ""}.`});
+    } catch (error) {
+      const rows = Object.entries(fieldErrors(error)).filter(([key]) => key.startsWith("row-"));
+      if (rows.length) setRowErrors(rows.map(([key, text]) => `Fila ${key.slice(4)}: ${text}`));
+      else fail(error);
+    }
+  });
+
   const remember = (issued: Issued) => issued.link && setLinks(map => ({...map, [issued.id]: issued.link!}));
 
   const invite = (event: FormEvent) => {
@@ -143,6 +158,23 @@ export function InvitationPanel({raceId, published}: {raceId: number; published:
           {riderErrors.form && <p className="error" role="alert">{riderErrors.form}</p>}
           <button className="btn-secondary" disabled={busy}>Añadir corredor</button>
         </form>
+      </details>
+
+      <details>
+        <summary>Cargar padrón desde Excel</summary>
+        <div className="stack">
+          <p className="muted">Archivo .xlsx con una fila de encabezados: <strong>Nombre</strong> y <strong>Email</strong> y/o <strong>Teléfono</strong>, en cualquier orden. Se lee la primera hoja. Si subes el archivo otra vez, no se duplica a nadie.</p>
+          <label>Archivo de Excel
+            <input type="file" accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" disabled={busy}
+              onChange={e => { importSheet(e.target.files?.[0]); e.target.value = ""; }} />
+          </label>
+          {rowErrors.length > 0 && (
+            <div className="error" role="alert">
+              <p>No se cargó nadie. Corrige estas filas y vuelve a subir el archivo:</p>
+              <ul>{rowErrors.map(text => <li key={text}>{text}</li>)}</ul>
+            </div>
+          )}
+        </div>
       </details>
 
       {published ? (

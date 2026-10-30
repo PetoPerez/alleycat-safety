@@ -1,10 +1,12 @@
+import unicodedata
 from datetime import datetime
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import AwareDatetime, BaseModel, ConfigDict
 from sqlalchemy.orm import Session
 from ..database import get_db, utcnow
 from ..models import CheckIn, Checkpoint, HelpRequest, Invitation, InvitationEvent, Race, Rider, RiderPosition
 from ..services import races as race_service
+from ..services.spreadsheet import SpreadsheetError, rows as spreadsheet_rows
 from .auth import organizer
 
 router = APIRouter(tags=["races"])
@@ -115,21 +117,92 @@ def draft_for(race_id: int, account, db: Session) -> Race:
     return race
 
 
+def rider_values(name: str | None, email: str | None, phone: str | None) -> dict:
+    return {"name": (name or "").strip(), "email": (email or "").strip().lower() or None, "phone": (phone or "").strip() or None}
+
+
+def rider_problem(values: dict) -> tuple[str, str] | None:
+    if not values["name"]:
+        return "name", "Rider name cannot be blank"
+    if not values["email"] and not values["phone"]:
+        return "email", "Email or phone is required"
+
+
 @router.post("/races/{race_id}/riders", response_model=RiderOut)
 def create_rider(race_id: int, body: RiderIn, account=Depends(organizer), db: Session = Depends(get_db)):
     race_for(race_id, account, db)
-    name = body.name.strip()
-    email = (body.email or "").strip().lower() or None
-    phone = (body.phone or "").strip() or None
-    if not name:
-        field_error("name", "Rider name cannot be blank")
-    if not email and not phone:
-        field_error("email", "Email or phone is required")
-    rider = Rider(organizer_id=account.id, race_id=race_id, name=name, email=email, phone=phone)
+    values = rider_values(body.name, body.email, body.phone)
+    if problem := rider_problem(values):
+        field_error(*problem)
+    rider = Rider(organizer_id=account.id, race_id=race_id, **values)
     db.add(rider)
     db.commit()
     db.refresh(rider)
     return rider
+
+
+MAX_ROSTER_BYTES = 2 * 1024 * 1024
+MAX_ROSTER_ROWS = 2000
+HEADERS = {"name": ("nombre", "name", "corredor", "nombre completo"),
+           "email": ("email", "e-mail", "mail", "correo", "correo electronico"),
+           "phone": ("telefono", "phone", "celular", "movil", "whatsapp", "tel")}
+
+
+def header_key(text: str) -> str | None:
+    plain = unicodedata.normalize("NFKD", text).encode("ascii", "ignore").decode().strip().lower()
+    return next((key for key, names in HEADERS.items() if plain in names), None)
+
+
+def import_rows(table: list[list[str]]) -> tuple[list[dict], list[dict]]:
+    """First non-empty row is the header; columns are found by name, in any order."""
+    table = [row for row in table if any(row)]
+    if not table:
+        raise HTTPException(422, "The spreadsheet is empty")
+    columns = {}
+    for index, text in enumerate(table[0]):
+        if (key := header_key(text)) and key not in columns:
+            columns[key] = index
+    if "name" not in columns or not ({"email", "phone"} & columns.keys()):
+        raise HTTPException(422, "The spreadsheet needs a Nombre column and an Email or Teléfono column")
+    if len(table) - 1 > MAX_ROSTER_ROWS:
+        raise HTTPException(422, f"At most {MAX_ROSTER_ROWS} riders per spreadsheet")
+    riders, problems = [], []
+    cell = lambda row, key: row[columns[key]] if key in columns and columns[key] < len(row) else None
+    for number, row in enumerate(table[1:], start=2):  # spreadsheet row numbers, header is row 1
+        values = rider_values(cell(row, "name"), cell(row, "email"), cell(row, "phone"))
+        if problem := rider_problem(values):
+            problems.append({"loc": ["body", f"row-{number}"], "msg": problem[1]})
+        else:
+            riders.append(values)
+    return riders, problems
+
+
+@router.post("/races/{race_id}/riders/import")
+async def import_riders(race_id: int, request: Request, account=Depends(organizer), db: Session = Depends(get_db)):
+    """Raw .xlsx body. All or nothing, so fixing the sheet and uploading again never doubles anyone;
+    riders already on this race's roster (same email or phone) are skipped."""
+    race_for(race_id, account, db)
+    content = await request.body()
+    if len(content) > MAX_ROSTER_BYTES:
+        raise HTTPException(422, "Spreadsheet is too large")
+    try:
+        riders, problems = import_rows(spreadsheet_rows(content))
+    except SpreadsheetError as error:
+        raise HTTPException(422, str(error))
+    if problems:
+        raise HTTPException(422, problems[:20])  # one entry per spreadsheet row, like field errors
+    seen = {value for rider in db.query(Rider).filter_by(race_id=race_id) for value in (rider.email, rider.phone) if value}
+    added = skipped = 0
+    for values in riders:
+        keys = {value for value in (values["email"], values["phone"]) if value}
+        if keys & seen:
+            skipped += 1
+            continue
+        seen |= keys
+        db.add(Rider(organizer_id=account.id, race_id=race_id, **values))
+        added += 1
+    db.commit()
+    return {"added": added, "skipped": skipped}
 
 
 @router.get("/races/{race_id}/riders", response_model=list[RiderOut])

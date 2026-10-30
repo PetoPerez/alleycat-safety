@@ -264,6 +264,28 @@ describe("matrix", () => {
   } as Parameters<typeof mockApi>[0]);
   const inv = (id: number, state: string) => ({id, rider_id: 5, channel: "whatsapp", expires_at: "2026-11-05T00:00:00Z", delivery_status: state, state});
 
+  it("Excel: uploads the file as-is, reports what was added, and lists the rows to fix", async () => {
+    let reply: {status?: number; body: unknown} = {body: {added: 3, skipped: 1}};
+    const api = published(() => [], {"POST /races/1/riders/import": () => reply});
+    await render(<App />);
+    await click(button("Uno"));
+    const pick = async (file: File) => {
+      const input = field("Archivo de Excel");
+      Object.defineProperty(input, "files", {configurable: true, value: [file]});
+      await act(async () => input.dispatchEvent(new Event("change", {bubbles: true})));
+      await flush();
+    };
+    const file = new File(["xlsx"], "padron.xlsx");
+    await pick(file);
+    expect(api.calls.find(c => c.key === "POST /races/1/riders/import")!.body).toBe(file);
+    expect(text()).toContain("Se añadieron 3 corredores al padrón; 1 ya estaban");
+    reply = {status: 422, body: {detail: [{loc: ["body", "row-3"], msg: "Email or phone is required"}, {loc: ["body", "row-7"], msg: "Rider name cannot be blank"}]}};
+    await pick(file);
+    expect(text()).toContain("No se cargó nadie");
+    expect(text()).toContain("Fila 3: Indica un email o un teléfono.");
+    expect(text()).toContain("Fila 7: Escribe el nombre del corredor.");
+  });
+
   it("Reenviar: the new link appears for the replacement invitation", async () => {
     let list = [inv(9, "sent")];
     published(() => list, {"POST /invitations/9/resend": () => {
@@ -486,7 +508,7 @@ describe("matrix", () => {
     const api = mockApi({
       "GET /auth/me": {body: admin},
       "GET /races": {body: [{...race(1, "Pasada", "published"), checkpoints_release_at: "2000-01-01T00:00:00Z"},
-                            {...race(2, "Pronto", "published"), checkpoints_release_at: new Date(Date.now() + 80).toISOString()}]},
+                            {...race(2, "Pronto", "published"), checkpoints_release_at: new Date(Date.now() + 1000).toISOString()}]},
       "GET /races/1/checkpoints": {body: []}, "GET /races/2/checkpoints": {body: []}, "GET /races/1/riders": {body: []}, "GET /races/2/riders": {body: []},
       "GET /races/1/invitations": {body: []}, "GET /races/2/invitations": {body: []},
     });
@@ -496,7 +518,7 @@ describe("matrix", () => {
     expect(text()).not.toContain("Liberar ahora");
     await click(button("Pronto"));
     expect(text()).toContain("Liberar ahora");
-    await act(async () => { await new Promise(r => setTimeout(r, 150)); });
+    await act(async () => { await new Promise(r => setTimeout(r, 1100)); });
     await flush();
     expect(text()).toContain("Checkpoints liberados");
     expect(text()).not.toContain("Liberar ahora");

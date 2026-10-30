@@ -10,7 +10,7 @@ export function mockApi(routes: Record<string, Reply>) {
   const calls: {key: string; body?: unknown}[] = [];
   const fetchMock = vi.fn(async (path: string, init: RequestInit = {}) => {
     const key = `${init.method ?? "GET"} ${path}`;
-    calls.push({key, body: init.body ? JSON.parse(String(init.body)) : undefined});
+    calls.push({key, body: typeof init.body === "string" ? JSON.parse(init.body) : init.body ?? undefined}); // files pass through as-is
     if (!(key in routes)) throw new Error(`unmocked ${key}`);
     const reply = routes[key];
     const {status = 200, body} = typeof reply === "function" ? reply() : reply;

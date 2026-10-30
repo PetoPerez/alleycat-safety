@@ -776,3 +776,62 @@ def test_finish_line_qr_records_arrival_and_is_unique(db, clock):
     assert [p["finish"] for p in open_invite(token, db)["race"]["checkpoints"]] == [False, True]
     assert check_in(token, at_pin(meta.code, 19.42, -99.12), db)["finish"] is True
     assert [c["checkpoint_id"] for c in board(race.id, admin, db)["checkins"]] == [meta.id]
+
+
+# --- roster import from Excel -------------------------------------------------
+
+def xlsx(rows) -> bytes:
+    """Minimal workbook as Excel writes it: text in sharedStrings, numbers inline (a phone typed as a number)."""
+    import io, zipfile
+    from xml.sax.saxutils import escape
+    shared, sheet = [], []
+    for r, row in enumerate(rows, start=1):
+        cells = []
+        for c, value in enumerate(row):
+            ref = f"{chr(65 + c)}{r}"
+            if isinstance(value, (int, float)):
+                cells.append(f'<c r="{ref}"><v>{value}</v></c>')
+            elif value:
+                shared.append(value)
+                cells.append(f'<c r="{ref}" t="s"><v>{len(shared) - 1}</v></c>')
+        sheet.append(f'<row r="{r}">{"".join(cells)}</row>')
+    m = 'xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"'
+    out = io.BytesIO()
+    with zipfile.ZipFile(out, "w") as z:
+        z.writestr("xl/workbook.xml", f'<workbook {m} xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">'
+                                      '<sheets><sheet name="Padrón" sheetId="1" r:id="rId1"/></sheets></workbook>')
+        z.writestr("xl/_rels/workbook.xml.rels", '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'
+                                                 '<Relationship Id="rId1" Target="worksheets/sheet1.xml"/></Relationships>')
+        z.writestr("xl/sharedStrings.xml", f'<sst {m}>' + "".join(f"<si><t>{escape(v)}</t></si>" for v in shared) + "</sst>")
+        z.writestr("xl/worksheets/sheet1.xml", f'<worksheet {m}><sheetData>{"".join(sheet)}</sheetData></worksheet>')
+    return out.getvalue()
+
+
+def upload(admin, race_id, content):
+    async def flow():
+        app.dependency_overrides[organizer] = lambda: admin
+        try:
+            async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
+                return await client.post(f"/races/{race_id}/riders/import", content=content)
+        finally:
+            app.dependency_overrides.clear()
+    return asyncio.run(flow())
+
+
+def test_roster_import_from_excel_is_all_or_nothing_and_skips_known_riders(db):
+    admin = new_admin(db, "import@example.test")
+    race = published_race(db, admin, "Import")
+    create_rider(race.id, RiderIn(name="Already", phone="5500000001"), admin, db)
+    bad = upload(admin, race.id, xlsx([["Nombre", "Correo", "Teléfono"], ["Ana", "ANA@x.mx", ""], ["Sin contacto", "", ""]]))
+    assert bad.status_code == 422 and bad.json()["detail"] == [{"loc": ["body", "row-3"], "msg": "Email or phone is required"}]
+    assert [r.name for r in list_riders(race.id, admin, db)] == ["Already"]
+    sheet = xlsx([["", ""], ["TELÉFONO", "Nombre", "Email"], [5512345678, "Beto", ""], ["", "Ana", "ANA@x.mx"],
+                  ["5500000001", "Already again", ""], [None, None, None]])
+    assert upload(admin, race.id, sheet).json() == {"added": 2, "skipped": 1}
+    assert upload(admin, race.id, sheet).json() == {"added": 0, "skipped": 3}  # uploading twice doubles nobody
+    riders = {r.name: (r.email, r.phone) for r in list_riders(race.id, admin, db)}
+    assert riders == {"Already": (None, "5500000001"), "Ana": ("ana@x.mx", None), "Beto": (None, "5512345678")}
+    for content in (b"not a spreadsheet", xlsx([["Apodo", "Color"], ["x", "y"]])):
+        assert upload(admin, race.id, content).status_code == 422
+    other = new_admin(db, "import-other@example.test")
+    assert upload(other, race.id, sheet).status_code == 404
