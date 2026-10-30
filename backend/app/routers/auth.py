@@ -14,6 +14,8 @@ router = APIRouter(prefix="/auth", tags=["auth"])
 SESSION_COOKIE = "alleycat_session"
 log = logging.getLogger(__name__)
 THROTTLE = timedelta(seconds=60)
+SESSION_TTL = timedelta(days=7)  # counted from the last use, not from sign-in
+RENEW_EVERY = timedelta(days=1)  # so an active session costs one write a day, not one per request
 GENERIC = "If this email belongs to an organizer account, a sign-in link has been sent."
 
 
@@ -29,15 +31,27 @@ def superadmin_email() -> str:
     return normalize_email(os.getenv("SUPERADMIN_EMAIL", ""))
 
 
-def organizer(alleycat_session: str | None = Cookie(None), db: Session = Depends(get_db)) -> Organizer:
+def set_session_cookie(response: Response, session_token: str):
+    response.set_cookie(SESSION_COOKIE, session_token, httponly=True, secure=not preview_enabled(), samesite="lax",
+                        max_age=int(SESSION_TTL.total_seconds()))
+
+
+def organizer(alleycat_session: str | None = Cookie(None), db: Session = Depends(get_db), response: Response = None) -> Organizer:
     if not alleycat_session:
         raise HTTPException(401, "Organizer authentication required")
     session = db.query(OrganizerSession).filter_by(token_hash=token_hash(alleycat_session)).first()
-    if not session or session.revoked_at or session.expires_at <= utcnow():
+    now = utcnow()
+    if not session or session.revoked_at or session.expires_at <= now:
         raise HTTPException(401, "Organizer authentication required")
     account = db.get(Organizer, session.organizer_id)
     if not account:
         raise HTTPException(401, "Organizer authentication required")
+    # ponytail: sliding expiry with no absolute cap; a stolen cookie stays valid while used, add a max age if that matters
+    if session.expires_at - now < SESSION_TTL - RENEW_EVERY:
+        session.expires_at = now + SESSION_TTL
+        db.commit()
+        if response is not None:
+            set_session_cookie(response, alleycat_session)
     return account
 
 
@@ -83,9 +97,9 @@ def consume_magic_link(token: str, response: Response, db: Session = Depends(get
     if not link:
         raise HTTPException(404, "Magic link is invalid, expired, or already used")
     session_token = new_token()
-    db.add(OrganizerSession(organizer_id=link.organizer_id, token_hash=token_hash(session_token), expires_at=utcnow() + timedelta(days=7)))
+    db.add(OrganizerSession(organizer_id=link.organizer_id, token_hash=token_hash(session_token), expires_at=utcnow() + SESSION_TTL))
     db.commit()
-    response.set_cookie(SESSION_COOKIE, session_token, httponly=True, secure=not preview_enabled(), samesite="lax", max_age=7 * 24 * 60 * 60)
+    set_session_cookie(response, session_token)
     return {"status": "signed_in"}
 
 

@@ -31,6 +31,7 @@ from app.routers.live import (CheckInIn, HelpIn, PositionIn, ask_help, board, ch
 from app.services.races import distance_m
 from app.routers.races import (CheckpointIn, RaceIn, RiderIn, add_checkpoint, checkpoints, create_race, create_rider,
                                delete_checkpoint, edit_race, get_race, publish, release_checkpoints)
+from app.security import token_hash
 from app.services import mailer
 
 Base.metadata.create_all(engine)
@@ -219,6 +220,30 @@ def test_expired_unknown_and_missing_sessions_are_rejected(db):
     db.commit()
     for value in (cookie, "forged-session", None):
         assert status_of(organizer, value, db).status_code == 401
+
+
+def test_session_slides_with_use_and_lapses_after_a_week_idle(db, monkeypatch):
+    signed_in = utcnow()
+    response = Response()
+    consume_magic_link(token_of(request_link(db, "boss@example.test")["link"]), response, db)
+    cookie = response.headers["set-cookie"].split(";", 1)[0].split("=", 1)[1]
+    session = db.query(OrganizerSession).filter_by(token_hash=token_hash(cookie)).one()
+    first_expiry = session.expires_at
+
+    def use_at(when):
+        monkeypatch.setattr("app.routers.auth.utcnow", lambda: when)
+        out = Response()
+        organizer(cookie, db, out)
+        db.refresh(session)
+        return out
+
+    assert "set-cookie" not in use_at(signed_in + timedelta(hours=12)).headers  # under a day: no write
+    assert session.expires_at == first_expiry
+    renewed = use_at(signed_in + timedelta(days=6))
+    assert session.expires_at == signed_in + timedelta(days=13) and "Max-Age=604800" in renewed.headers["set-cookie"]
+    use_at(signed_in + timedelta(days=12, hours=23))  # past the original 7 days: still signed in
+    monkeypatch.setattr("app.routers.auth.utcnow", lambda: session.expires_at)
+    assert status_of(organizer, cookie, db).status_code == 401
 
 
 def test_database_url_normalization():
