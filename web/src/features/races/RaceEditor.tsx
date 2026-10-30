@@ -107,6 +107,9 @@ export function RaceEditor({race, onChanged}: {race: Race; onChanged: (race: Rac
   const lng = coordinate(spot.lng, 180);
   const selected: [number, number] | null = lat !== null && lng !== null ? [lat, lng] : null;
   const [label, setLabel] = useState("");
+  const [finish, setFinish] = useState(false);
+  const hasFinish = pins.some(p => p.finish);
+  const stops = pins.filter(p => !p.finish).length; // the finish alone does not make a race publishable
   const [message, setMessage] = useState("");
   const [busy, guard] = useBusy();
   const pinsPath = `/races/${race.id}/checkpoints`;
@@ -122,8 +125,8 @@ export function RaceEditor({race, onChanged}: {race: Race; onChanged: (race: Rac
     if (!selected) return setMessage("Elige el punto en el mapa o escribe latitud y longitud");
     if (!label.trim()) return setMessage("Escribe una etiqueta para el checkpoint");
     run(async () => {
-      await request(pinsPath, {method: "POST", json: {name: label, latitude: selected[0], longitude: selected[1]}});
-      setLabel(""); setSpot({lat: "", lng: ""});
+      await request(pinsPath, {method: "POST", json: {name: label, latitude: selected[0], longitude: selected[1], finish}});
+      setLabel(""); setFinish(false); setSpot({lat: "", lng: ""});
       await reloadPins();
     });
   };
@@ -180,7 +183,7 @@ export function RaceEditor({race, onChanged}: {race: Race; onChanged: (race: Rac
         {draft && <PinChooser onSelect={(la, ln) => setSpot({lat: la.toFixed(6), lng: ln.toFixed(6)})} />}
         {draft && selected && <Marker position={selected} icon={chosenIcon} interactive={false} />}
         {pins.map(pin => (
-          <Marker key={pin.id} position={[pin.latitude, pin.longitude]}><Tooltip>{pin.name}</Tooltip></Marker>
+          <Marker key={pin.id} position={[pin.latitude, pin.longitude]}><Tooltip>{pin.finish ? `Meta: ${pin.name}` : pin.name}</Tooltip></Marker>
         ))}
       </MapContainer>
       {draft && (
@@ -198,14 +201,18 @@ export function RaceEditor({race, onChanged}: {race: Race; onChanged: (race: Rac
             <label className="grow">Etiqueta del checkpoint
               <input value={label} onChange={e => setLabel(e.target.value)} />
             </label>
-            <button className="btn-secondary" disabled={busy || !selected}>Añadir checkpoint</button>
+            <button className="btn-secondary" disabled={busy || !selected}>{finish ? "Añadir meta" : "Añadir checkpoint"}</button>
           </div>
+          {!hasFinish && (
+            <label className="row"><input type="checkbox" checked={finish} onChange={e => setFinish(e.target.checked)} />
+              Es la meta (su QR registra la hora de llegada)</label>
+          )}
         </form>
       )}
       <ul className="list">
         {pinsForDisplay(pins).map(pin => (
           <li key={pin.id}>
-            <span>{pin.name} <span className="muted">({pin.latitude.toFixed(5)}, {pin.longitude.toFixed(5)})</span></span>
+            <span>{pin.finish && <><span className="badge">Meta</span> </>}{pin.name} <span className="muted">({pin.latitude.toFixed(5)}, {pin.longitude.toFixed(5)})</span></span>
             {draft && <button className="btn-danger" disabled={busy} onClick={() => removePin(pin)} aria-label={`Borrar ${pin.name}`}>Borrar</button>}
           </li>
         ))}
@@ -214,8 +221,8 @@ export function RaceEditor({race, onChanged}: {race: Race; onChanged: (race: Rac
       {message && <p className="error" role="alert">{message}</p>}
       {draft && (
         <div className="stack">
-          <button className="btn-primary" disabled={busy || !pins.length} onClick={publish} aria-describedby="publish-help">Publicar carrera</button>
-          {!pins.length && <p id="publish-help" className="muted">Añade al menos un checkpoint para poder publicar.</p>}
+          <button className="btn-primary" disabled={busy || !stops} onClick={publish} aria-describedby="publish-help">Publicar carrera</button>
+          {!stops && <p id="publish-help" className="muted">Añade al menos un checkpoint para poder publicar.</p>}
         </div>
       )}
     </section>

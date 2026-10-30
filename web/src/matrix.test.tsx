@@ -108,7 +108,7 @@ describe("matrix", () => {
     await type(field("Longitud del checkpoint"), "-99.13");
     await type(field("Etiqueta del checkpoint"), "Puente");
     await submit(field("Etiqueta del checkpoint").closest("form")!);
-    expect(api.calls.find(c => c.key === "POST /races/1/checkpoints")!.body).toEqual({name: "Puente", latitude: 19.43, longitude: -99.13});
+    expect(api.calls.find(c => c.key === "POST /races/1/checkpoints")!.body).toEqual({name: "Puente", latitude: 19.43, longitude: -99.13, finish: false});
     expect(text()).toContain("Puente");
     await click(button("Borrar"));
     expect(text()).not.toContain("Puente (");
@@ -627,6 +627,16 @@ describe("race-day board", () => {
 
   it("ranks by checkpoints reached, then by who reached the last one first", () => {
     expect(standings(data as never).map(r => r.rider.name)).toEqual(["Zoe", "Beto", "Ana"]);
+  });
+
+  it("the finish is its own column and does not count as a checkpoint", async () => {
+    const withFinish = {...data, checkpoints: [...data.checkpoints, {id: 13, name: "Meta", finish: true}],
+      checkins: [...data.checkins, {rider_id: 2, checkpoint_id: 13, checked_in_at: "2026-11-01T19:00:00Z"}]};
+    expect(standings(withFinish as never).map(r => [r.rider.name, r.visits.size, !!r.finished])).toEqual([["Zoe", 2, false], ["Beto", 2, false], ["Ana", 0, true]]);
+    mockApi({"GET /races/1/board": {body: withFinish}});
+    at("/tablero/1");
+    await render(<App />);
+    expect([...document.querySelectorAll(".board-table th")].map(th => th.textContent)).toEqual(["#", "Corredor", "A 2/3", "B 2/3", "Total", "Meta 1/3"]);
   });
 
   it("shows the grid and open help, and asks to log in without a session", async () => {

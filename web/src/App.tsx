@@ -38,7 +38,7 @@ export function App() {
   );
 }
 
-type GuestPin = {name: string; latitude: number; longitude: number};
+type GuestPin = {name: string; latitude: number; longitude: number; finish?: boolean};
 /** `checkpoints` is absent until the server releases them. */
 type InviteSummary = {race: {name: string; start_label: string; starts_at: string; ends_at: string; checkpoints_release_at: string; checkpoints?: GuestPin[]}; confirmed: boolean};
 const REFRESH_MS = 30_000;
@@ -99,7 +99,7 @@ export function InviteView({token}: {token: string | null}) {
       {token && <HelpButtons token={token} />}
       {race.checkpoints ? <GuestCheckpoints pins={race.checkpoints} />
         : <p className="notice" role="status">Los checkpoints se publican a las {formatRelease(race.checkpoints_release_at)}. Deja esta página abierta: aparecerán solos.</p>}
-      <p className="notice">Para registrar tu visita a un checkpoint, escanea su QR con la cámara de este teléfono estando ahí (a menos de 50 m). Guarda este enlace.</p>
+      <p className="notice">Para registrar tu visita a un checkpoint o tu llegada a la meta, escanea su QR con la cámara de este teléfono estando ahí (a menos de 50 m). Guarda este enlace.</p>
     </section>
   );
 }
@@ -159,7 +159,7 @@ function HelpButtons({token}: {token: string}) {
   );
 }
 
-type CheckInResult = {checkpoint: string; checked_in_at: string};
+type CheckInResult = {checkpoint: string; checked_in_at: string; finish?: boolean};
 type CheckIn = {state: "locating"} | {state: "sending"} | {state: "ok"; value: CheckInResult} | {state: "failed"; message: string};
 
 /** Opened by the phone camera from a checkpoint QR. The rider is identified by the invitation opened earlier on
@@ -201,7 +201,7 @@ export function CheckInView({code}: {code: string | null}) {
   );
   return (
     <section className="card stack">
-      <h1>Checkpoint registrado</h1>
+      <h1>{result.value.finish ? "¡Llegada a meta registrada!" : "Checkpoint registrado"}</h1>
       <p><strong>{result.value.checkpoint}</strong> a las {formatTime(result.value.checked_in_at)}.</p>
       {back}
     </section>
@@ -219,12 +219,12 @@ function GuestCheckpoints({pins}: {pins: GuestPin[]}) {
       <MapContainer bounds={bounds} boundsOptions={{padding: [24, 24], maxZoom: 16}} className="checkpoint-map">
         <TileLayer attribution="&copy; OpenStreetMap contributors" url="https://tile.openstreetmap.org/{z}/{x}/{y}.png" />
         {sorted.map((pin, i) => (
-          <Marker key={i} position={[pin.latitude, pin.longitude]}><Tooltip>{pin.name}</Tooltip></Marker>
+          <Marker key={i} position={[pin.latitude, pin.longitude]}><Tooltip>{pin.finish ? `Meta: ${pin.name}` : pin.name}</Tooltip></Marker>
         ))}
       </MapContainer>
       <ul className="list">
         {sorted.map((pin, i) => (
-          <li key={i}><span>{pin.name} <span className="muted">({pin.latitude.toFixed(5)}, {pin.longitude.toFixed(5)})</span></span></li>
+          <li key={i}><span>{pin.finish && <><span className="badge">Meta</span> </>}{pin.name} <span className="muted">({pin.latitude.toFixed(5)}, {pin.longitude.toFixed(5)})</span></span></li>
         ))}
       </ul>
     </>

@@ -2,7 +2,7 @@ export type Me = {id: number; email: string; role: "superadmin" | "admin"};
 export type Race = {id: number; name: string; start_label: string; latitude: number; longitude: number; starts_at: string; ends_at: string; status: "draft" | "published";
   checkpoints_release_minutes: number; checkpoints_release_at: string; checkpoints_released: boolean; winner_rider_id: number | null};
 export type RaceInput = Omit<Race, "id" | "status" | "checkpoints_release_at" | "checkpoints_released" | "winner_rider_id">;
-export type Checkpoint = {id: number; name: string; description?: string | null; latitude: number; longitude: number; code: string};
+export type Checkpoint = {id: number; name: string; description?: string | null; latitude: number; longitude: number; code: string; finish: boolean};
 export type Rider = {id: number; name: string; email?: string | null; phone?: string | null};
 export type InvitationState = "sent" | "opened" | "confirmed" | "expired" | "revoked" | "used";
 export type Invitation = {id: number; rider_id: number; channel: "email" | "whatsapp"; expires_at: string; delivery_status: string; state: InvitationState};
@@ -39,6 +39,7 @@ const MESSAGES: Record<string, string> = {
   "Published races cannot be changed in this release": "Una carrera publicada ya no se puede cambiar.",
   "Rider name cannot be blank": "Escribe el nombre del corredor.",
   "Email or phone is required": "Indica un email o un teléfono.",
+  "Race already has a finish": "Esta carrera ya tiene meta.",
   "Checkpoint label cannot be blank": "Escribe una etiqueta para el checkpoint.",
   "Add at least one checkpoint before publishing": "Añade al menos un checkpoint antes de publicar.",
   "Release minutes must be between 0 and 1440": "Indica entre 0 y 1440 minutos.",

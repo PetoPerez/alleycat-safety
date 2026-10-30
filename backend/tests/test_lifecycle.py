@@ -469,7 +469,7 @@ def test_scheduled_release_shows_all_checkpoints_by_name(db, clock):
     _, token = invited(db, admin, race)
     clock(START - timedelta(minutes=30))
     assert open_invite(token, db)["race"]["checkpoints"] == [
-        {"name": "Alfa", "latitude": 19.41, "longitude": -99.1}, {"name": "Zeta", "latitude": 19.43, "longitude": -99.1}]
+        {"name": "Alfa", "latitude": 19.41, "longitude": -99.1, "finish": False}, {"name": "Zeta", "latitude": 19.43, "longitude": -99.1, "finish": False}]
 
 
 def test_release_now_is_owner_only_published_only_and_idempotent(db, clock):
@@ -626,7 +626,7 @@ def test_checkpoint_qr_check_in_is_live_only_idempotent_and_race_scoped(db, cloc
     clock(START + timedelta(minutes=5))
     for bad in (foreign, "nope"):
         assert status_of(check_in, token, at_pin(bad), db).status_code == 404
-    assert check_in(token, at_pin(code), db) == {"checkpoint": "A", "checked_in_at": START + timedelta(minutes=5)}
+    assert check_in(token, at_pin(code), db) == {"checkpoint": "A", "checked_in_at": START + timedelta(minutes=5), "finish": False}
     clock(START + timedelta(minutes=9))
     assert check_in(token, at_pin(code), db)["checked_in_at"] == START + timedelta(minutes=5)
     assert [(c["rider"], c["checkpoint"]) for c in checkins(race.id, admin, db)] == [("Rider", "A")]
@@ -659,7 +659,7 @@ def test_board_lists_invited_riders_checkins_and_open_help_only(db, clock):
     ask_help(token, HelpIn(kind="medical"), db)
     view = board(race.id, admin, db)
     assert [r["name"] for r in view["riders"]] == ["Rider"]
-    assert view["checkpoints"] == [{"id": pin.id, "name": "A"}]
+    assert view["checkpoints"] == [{"id": pin.id, "name": "A", "finish": False}]
     assert [(c["checkpoint_id"], c["checked_in_at"]) for c in view["checkins"]] == [(pin.id, START + timedelta(minutes=5))]
     assert [h["kind"] for h in view["help"]] == ["medical"]
 
@@ -761,3 +761,18 @@ def test_organizer_marks_and_clears_the_winner_and_can_still_delete_the_race(db,
     clock(race.ends_at)
     delete_race(race.id, admin, db)  # the winner reference must not block deleting its rider
     assert status_of(get_race, race.id, admin, db).status_code == 404
+
+
+def test_finish_line_qr_records_arrival_and_is_unique(db, clock):
+    admin = new_admin(db, "finish@example.test")
+    race = create_race(race_input("Finish"), admin, db)
+    meta = add_checkpoint(race.id, CheckpointIn(name="Meta", latitude=19.42, longitude=-99.12, finish=True), admin, db)
+    assert status_of(add_checkpoint, race.id, CheckpointIn(name="Meta 2", latitude=19.42, longitude=-99.12, finish=True), admin, db).status_code == 422
+    assert status_of(publish, race.id, admin, db).status_code == 422  # the finish alone is not a checkpoint to visit
+    add_checkpoint(race.id, CheckpointIn(name="A", latitude=19.41, longitude=-99.11), admin, db)
+    publish(race.id, admin, db)
+    _, token = invited(db, admin, race)
+    clock(START + timedelta(minutes=30))
+    assert [p["finish"] for p in open_invite(token, db)["race"]["checkpoints"]] == [False, True]
+    assert check_in(token, at_pin(meta.code, 19.42, -99.12), db)["finish"] is True
+    assert [c["checkpoint_id"] for c in board(race.id, admin, db)["checkins"]] == [meta.id]

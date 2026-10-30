@@ -118,7 +118,7 @@ def open_invite(token: str, db: Session = Depends(get_db)):
     # Before release the response carries no checkpoint data at all, not even a count.
     if race_service.released(race, utcnow()):
         pins = db.query(Checkpoint).filter_by(race_id=race.id, active=True).order_by(Checkpoint.name).all()
-        summary["checkpoints"] = [{"name": p.name, "latitude": p.latitude, "longitude": p.longitude} for p in pins]
+        summary["checkpoints"] = [{"name": p.name, "latitude": p.latitude, "longitude": p.longitude, "finish": p.finish} for p in pins]
     return {"race": summary, "confirmed": item.confirmed_at is not None}
 
 

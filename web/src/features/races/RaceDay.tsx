@@ -46,7 +46,7 @@ function CheckpointQr({pin, raceName}: {pin: Checkpoint; raceName: string}) {
   return (
     <figure className="qr">
       {src && <img src={src} alt={`QR del checkpoint ${pin.name}`} width={160} height={160} />}
-      <figcaption>{pin.name}</figcaption>
+      <figcaption>{pin.finish ? `Meta · ${pin.name}` : pin.name}</figcaption>
       <button type="button" className="btn-secondary" onClick={send}>Enviar imagen</button>
       {error && <p className="error" role="alert">{error}</p>}
     </figure>
@@ -76,11 +76,17 @@ export function RaceDay({race, onChanged}: {race: Race; onChanged: (race: Race) 
   const resolve = (id: number) => guard(async () => {
     try { await request(`/help/${id}/resolve`, {method: "POST"}); await load(); } catch (e) { setError(errorText(e)); }
   });
-  const reached = (id: number) => visits.filter(v => v.rider_id === id).length;
+  const finishId = pins.find(p => p.finish)?.id;
+  const stops = pins.filter(p => !p.finish).length;
+  const reached = (id: number) => visits.filter(v => v.rider_id === id && v.checkpoint_id !== finishId).length;
+  const arrival = (id: number) => visits.find(v => v.rider_id === id && v.checkpoint_id === finishId)?.checked_in_at;
+  // Finish arrivals first, in arrival order; then whoever has more checkpoints.
+  const candidates = [...riders].sort((a, b) => (arrival(a.id) ?? "~").localeCompare(arrival(b.id) ?? "~") || reached(b.id) - reached(a.id));
+  const detail = (id: number) => `${reached(id)}/${stops} checkpoints${arrival(id) ? ` · meta ${formatTime(arrival(id)!)}` : ""}`;
   const winner = riders.find(r => r.id === race.winner_rider_id);
   const setWinner = (riderId: number | null) => {
     const rider = riders.find(r => r.id === riderId);
-    if (rider && !window.confirm(`¿Marcar a ${rider.name} como ganador? Lleva ${reached(rider.id)}/${pins.length} checkpoints.`)) return;
+    if (rider && !window.confirm(`¿Marcar a ${rider.name} como ganador? ${detail(rider.id)}.`)) return;
     guard(async () => {
       try {
         onChanged(await request<Race>(`/races/${race.id}/winner`, {method: "PUT", json: {rider_id: riderId}}));
@@ -122,7 +128,7 @@ export function RaceDay({race, onChanged}: {race: Race; onChanged: (race: Race) 
       <h3>Ganador</h3>
       {winner ? (
         <div className="row spread">
-          <p className="notice" role="status"><strong>{winner.name}</strong> es el ganador ({reached(winner.id)}/{pins.length} checkpoints).</p>
+          <p className="notice" role="status"><strong>{winner.name}</strong> es el ganador ({detail(winner.id)}).</p>
           <button className="btn-secondary" disabled={busy} onClick={() => setWinner(null)}>Quitar ganador</button>
         </div>
       ) : (
@@ -130,15 +136,15 @@ export function RaceDay({race, onChanged}: {race: Race; onChanged: (race: Race) 
           <label className="grow">Corredor que llegó a la meta
             <select value={choice} onChange={e => setChoice(e.target.value)}>
               <option value="">Elige al corredor</option>
-              {[...riders].sort((a, b) => reached(b.id) - reached(a.id)).map(r => (
-                <option key={r.id} value={r.id}>{r.name} · {reached(r.id)}/{pins.length} checkpoints</option>
+              {candidates.map(r => (
+                <option key={r.id} value={r.id}>{r.name} · {detail(r.id)}</option>
               ))}
             </select>
           </label>
           <button className="btn-primary" disabled={busy || !choice}>Marcar ganador</button>
         </form>
       )}
-      <p className="muted">En la meta no hay QR: revisa que tenga todos sus checkpoints y márcalo aquí. Aparecerá en el tablero.</p>
+      <p className="muted">Los que escanearon el QR de la meta salen primero, por hora de llegada. Revisa que tenga todos sus checkpoints y márcalo aquí; aparecerá en el tablero.</p>
       <h3>QR de checkpoints</h3>
       <p className="muted">«Enviar imagen» abre el menú de compartir del teléfono para mandarlo por WhatsApp a la persona del checkpoint; en computadora descarga la imagen. El corredor lo escanea con la cámara y debe estar a menos de 50 m del checkpoint.</p>
       <div className="qr-grid">{pinsForDisplay(pins).map(pin => <CheckpointQr key={pin.id} pin={pin} raceName={race.name} />)}</div>

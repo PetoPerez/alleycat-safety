@@ -51,7 +51,7 @@ class Race(Base):
 
 
 class Checkpoint(Base):
-    """Unordered by design: there is no sequence column."""
+    """Unordered by design: there is no sequence column. At most one per race is the finish line (meta)."""
     __tablename__ = "checkpoints"
     id: Mapped[int] = mapped_column(primary_key=True)
     race_id: Mapped[int] = mapped_column(ForeignKey("races.id"))
@@ -60,6 +60,7 @@ class Checkpoint(Base):
     latitude: Mapped[float] = mapped_column(Float)
     longitude: Mapped[float] = mapped_column(Float)
     active: Mapped[bool] = mapped_column(Boolean, default=True)
+    finish: Mapped[bool] = mapped_column(Boolean, default=False, server_default=text("false"))
     code: Mapped[str] = mapped_column(String, unique=True, default=lambda: secrets.token_urlsafe(12))  # secret in the checkpoint QR
 
 

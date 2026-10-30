@@ -29,6 +29,7 @@ class CheckpointIn(BaseModel):
     description: str | None = None
     latitude: float
     longitude: float
+    finish: bool = False
 
 
 class RiderIn(BaseModel):
@@ -64,6 +65,7 @@ class CheckpointOut(Out):
     latitude: float
     longitude: float
     code: str
+    finish: bool
 
 
 class RiderOut(Out):
@@ -196,6 +198,8 @@ def add_checkpoint(race_id: int, body: CheckpointIn, account=Depends(organizer),
         field_error(coordinate_field(body.latitude), "Invalid coordinates")
     if not body.name.strip():
         field_error("name", "Checkpoint label cannot be blank")
+    if body.finish and db.query(Checkpoint).filter_by(race_id=race_id, active=True, finish=True).count():
+        field_error("finish", "Race already has a finish")
     checkpoint = Checkpoint(race_id=race_id, **{**body.model_dump(), "name": body.name.strip()})
     db.add(checkpoint)
     db.commit()
@@ -224,7 +228,7 @@ def publish(race_id: int, account=Depends(organizer), db: Session = Depends(get_
     race = race_for(race_id, account, db)
     if race.status == "published":
         return race
-    if not race_service.publishable(db.query(Checkpoint).filter_by(race_id=race.id, active=True).count()):
+    if not race_service.publishable(db.query(Checkpoint).filter_by(race_id=race.id, active=True, finish=False).count()):
         raise HTTPException(422, "Add at least one checkpoint before publishing")
     race.status = "published"
     db.commit()
