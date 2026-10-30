@@ -537,3 +537,42 @@ describe("matrix", () => {
     expect(text()).toContain("Invitación no disponible");
   });
 });
+
+describe("race day: checkpoint QR and help", () => {
+  const summary = {race: {name: "Noche", start_label: "Zócalo", starts_at: "2026-11-01T18:00:00Z", ends_at: "2026-11-01T21:00:00Z",
+    checkpoints_release_at: "2026-11-01T17:50:00Z"}, next: "later"};
+  afterEach(() => { localStorage.clear(); });
+
+  it("a scanned QR checks in with the invitation opened earlier on this phone", async () => {
+    mockApi({"POST /invite/tok": {body: summary}});
+    at("/invite/tok");
+    await render(<App />);
+    await cleanup();
+    at("/checkin/qr1");
+    const calls = mockApi({"POST /invite/tok/checkins": {body: {checkpoint: "Fuente", checked_in_at: "2026-11-01T18:30:00Z"}}}).calls;
+    await render(<App />);
+    expect(calls).toEqual([{key: "POST /invite/tok/checkins", body: {code: "qr1"}}]);
+    expect(text()).toContain("Checkpoint registrado");
+    expect(text()).toContain("Fuente");
+  });
+
+  it("a QR scanned without an opened invitation asks to open it first and calls nothing", async () => {
+    const {calls} = mockApi({});
+    at("/checkin/qr1");
+    await render(<App />);
+    expect(calls).toEqual([]);
+    expect(text()).toContain("Abre primero tu invitación");
+  });
+
+  it("a help button sends the kind with the position after confirmation", async () => {
+    const {calls} = mockApi({"POST /invite/tok": {body: summary}, "POST /invite/tok/help": {status: 201, body: {id: 1}}});
+    vi.stubGlobal("confirm", () => true);
+    Object.defineProperty(navigator, "geolocation", {configurable: true,
+      value: {getCurrentPosition: (ok: PositionCallback) => ok({coords: {latitude: 19.4, longitude: -99.1}} as GeolocationPosition)}});
+    at("/invite/tok");
+    await render(<App />);
+    await click(button("Problema mecánico"));
+    expect(calls.at(-1)).toEqual({key: "POST /invite/tok/help", body: {kind: "mechanical", latitude: 19.4, longitude: -99.1}});
+    expect(text()).toContain("Solicitud enviada con tu ubicación");
+  });
+});

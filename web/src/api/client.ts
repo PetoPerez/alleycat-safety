@@ -2,11 +2,14 @@ export type Me = {id: number; email: string; role: "superadmin" | "admin"};
 export type Race = {id: number; name: string; start_label: string; latitude: number; longitude: number; starts_at: string; ends_at: string; status: "draft" | "published";
   checkpoints_release_minutes: number; checkpoints_release_at: string; checkpoints_released: boolean};
 export type RaceInput = Omit<Race, "id" | "status" | "checkpoints_release_at" | "checkpoints_released">;
-export type Checkpoint = {id: number; name: string; description?: string | null; latitude: number; longitude: number};
+export type Checkpoint = {id: number; name: string; description?: string | null; latitude: number; longitude: number; code: string};
 export type Rider = {id: number; name: string; email?: string | null; phone?: string | null};
 export type InvitationState = "sent" | "opened" | "expired" | "revoked" | "used";
 export type Invitation = {id: number; rider_id: number; channel: "email" | "whatsapp"; expires_at: string; delivery_status: string; state: InvitationState};
 export type Issued = {id: number; delivery_status: string; state: InvitationState; expires_at: string; link?: string};
+export type CheckInRecord = {rider_id: number; rider: string; checkpoint_id: number; checkpoint: string; checked_in_at: string};
+export type HelpKind = "medical" | "accident" | "mechanical" | "other";
+export type HelpRequest = {id: number; rider: string; phone: string | null; kind: HelpKind; latitude: number | null; longitude: number | null; created_at: string; resolved_at: string | null};
 export type Organizer = {id: number; email: string; role: string; created_at: string};
 
 type Detail = string | {loc?: (string | number)[]; msg?: string}[] | undefined;
@@ -40,6 +43,9 @@ const MESSAGES: Record<string, string> = {
   "Add at least one checkpoint before publishing": "Añade al menos un checkpoint antes de publicar.",
   "Release minutes must be between 0 and 1440": "Indica entre 0 y 1440 minutos.",
   "Publish race before releasing checkpoints": "Publica la carrera antes de liberar los checkpoints.",
+  "Race is not in progress": "La carrera no está en curso.",
+  "Unknown help type": "Tipo de ayuda no válido.",
+  "Help request not found": "No se encontró la solicitud de ayuda.",
 };
 const BY_STATUS: Record<number, string> = {
   401: MESSAGES["Organizer authentication required"], 403: "No tienes permiso para hacer esto.",

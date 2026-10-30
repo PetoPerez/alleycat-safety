@@ -58,6 +58,7 @@ class CheckpointOut(Out):
     description: str | None
     latitude: float
     longitude: float
+    code: str
 
 
 class RiderOut(Out):

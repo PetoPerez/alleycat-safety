@@ -67,6 +67,12 @@ details > summary { cursor: pointer; color: var(--color-secondary); font-weight:
 details[open] > summary { margin-bottom: var(--space-md); }
 .copy input { flex: 1 1 12rem; }
 
+.list > li.alert { border-left: 4px solid var(--color-destructive); padding-left: var(--space-sm); background: var(--color-muted); }
+.qr-grid { display: flex; flex-wrap: wrap; gap: var(--space-md); }
+.qr { margin: 0; text-align: center; }
+.qr img { display: block; background: #fff; padding: 8px; border-radius: 8px; }
+.help-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(9rem, 1fr)); gap: var(--space-sm); }
+
 .checkpoint-map { height: 320px; width: 100%; border-radius: 8px; }
 .leaflet-container { font: inherit; color: #000; }
 

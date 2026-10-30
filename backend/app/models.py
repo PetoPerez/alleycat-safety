@@ -1,3 +1,4 @@
+import secrets
 from datetime import datetime
 from sqlalchemy import Boolean, CheckConstraint, Float, ForeignKey, Index, Integer, String, Text, text
 from sqlalchemy.orm import Mapped, mapped_column
@@ -56,6 +57,7 @@ class Checkpoint(Base):
     latitude: Mapped[float] = mapped_column(Float)
     longitude: Mapped[float] = mapped_column(Float)
     active: Mapped[bool] = mapped_column(Boolean, default=True)
+    code: Mapped[str] = mapped_column(String, unique=True, default=lambda: secrets.token_urlsafe(12))  # secret in the checkpoint QR
 
 
 class MagicLink(Base):
@@ -100,3 +102,34 @@ class InvitationEvent(Base):
     event: Mapped[str] = mapped_column(String)
     occurred_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow)
     detail: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+
+class RiderPosition(Base):
+    """Latest known position only: each report overwrites the previous one, no track history is kept."""
+    __tablename__ = "rider_positions"
+    race_id: Mapped[int] = mapped_column(ForeignKey("races.id"), primary_key=True)
+    rider_id: Mapped[int] = mapped_column(ForeignKey("riders.id"), primary_key=True)
+    latitude: Mapped[float] = mapped_column(Float)
+    longitude: Mapped[float] = mapped_column(Float)
+    recorded_at: Mapped[datetime] = mapped_column(UTCDateTime)
+
+
+class CheckIn(Base):
+    """A rider scanned a checkpoint's QR; one row per rider and checkpoint, the first scan wins."""
+    __tablename__ = "check_ins"
+    checkpoint_id: Mapped[int] = mapped_column(ForeignKey("checkpoints.id"), primary_key=True)
+    rider_id: Mapped[int] = mapped_column(ForeignKey("riders.id"), primary_key=True)
+    checked_in_at: Mapped[datetime] = mapped_column(UTCDateTime)
+
+
+class HelpRequest(Base):
+    __tablename__ = "help_requests"
+    __table_args__ = (CheckConstraint("kind in ('medical', 'accident', 'mechanical', 'other')", name="help_kind"),)
+    id: Mapped[int] = mapped_column(primary_key=True)
+    race_id: Mapped[int] = mapped_column(ForeignKey("races.id"))
+    rider_id: Mapped[int] = mapped_column(ForeignKey("riders.id"))
+    kind: Mapped[str] = mapped_column(String)
+    latitude: Mapped[float | None] = mapped_column(Float, nullable=True)  # absent when the phone gave no fix
+    longitude: Mapped[float | None] = mapped_column(Float, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime)
+    resolved_at: Mapped[datetime | None] = mapped_column(UTCDateTime, nullable=True)

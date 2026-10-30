@@ -26,6 +26,8 @@ from app.models import Checkpoint, Invitation, MagicLink, Organizer, OrganizerSe
 from app.routers.admin import create_organizer, list_organizers
 from app.routers.auth import EmailIn, consume_magic_link, issue_magic_link, organizer, superadmin
 from app.routers.invitations import InviteIn, invite, list_invitations, open_invite, resend, revoke
+from app.routers.live import (CheckInIn, HelpIn, PositionIn, ask_help, check_in, checkins, help_requests, positions,
+                              report_position, resolve_help)
 from app.routers.races import (CheckpointIn, RaceIn, RiderIn, add_checkpoint, checkpoints, create_race, create_rider,
                                delete_checkpoint, edit_race, get_race, publish, release_checkpoints)
 from app.services import mailer
@@ -379,7 +381,7 @@ def clock(monkeypatch):
     """Sets "now" for every module that decides checkpoint visibility."""
     def set_now(when):
         for target in ("app.models.utcnow", "app.routers.races.utcnow", "app.routers.invitations.utcnow",
-                       "app.services.invitations.utcnow"):
+                       "app.services.invitations.utcnow", "app.routers.live.utcnow"):
             monkeypatch.setattr(target, lambda: when)
     return set_now
 
@@ -548,3 +550,82 @@ def test_migration_0003_moves_only_active_invitations_to_race_end(tmp_path):
     with sqlite3.connect(tmp_path / "migrate.db") as conn:
         assert conn.execute("select id, expires_at from invitations order by id").fetchall() == [
             (1, "2030-01-20 12:00:00"), (2, "2030-01-08 00:00:00"), (3, "2030-01-20 12:00:00")]
+
+
+# --- live tracking ------------------------------------------------------------
+
+def test_positions_only_while_live_latest_wins_and_owner_only(db, clock):
+    admin = new_admin(db, "live@example.test")
+    other = new_admin(db, "live-other@example.test")
+    race = published_race(db, admin, "Live")
+    created, token = invited(db, admin, race)
+    for when in (START - timedelta(microseconds=1), race.ends_at):
+        clock(when)
+        assert status_of(report_position, token, PositionIn(latitude=19.4, longitude=-99.1), db).status_code in (404, 422)
+    clock(START)
+    assert status_of(report_position, token, PositionIn(latitude=91, longitude=0), db).status_code == 422
+    report_position(token, PositionIn(latitude=19.4, longitude=-99.1), db)
+    clock(START + timedelta(minutes=1))
+    report_position(token, PositionIn(latitude=19.42, longitude=-99.12), db)
+    assert [(p["name"], p["latitude"], p["recorded_at"]) for p in positions(race.id, admin, db)] == [
+        ("Rider", 19.42, START + timedelta(minutes=1))]
+    assert status_of(positions, race.id, other, db).status_code == 404
+    revoke(created["id"], admin, db)
+    assert status_of(report_position, token, PositionIn(latitude=19.4, longitude=-99.1), db).status_code == 404
+
+
+def test_checkpoint_qr_check_in_is_live_only_idempotent_and_race_scoped(db, clock):
+    admin = new_admin(db, "checkin@example.test")
+    other = new_admin(db, "checkin-other@example.test")
+    race = published_race(db, admin, "Checkin")
+    elsewhere = published_race(db, admin, "Elsewhere")
+    code = checkpoints(race.id, admin, db)[0].code
+    foreign = checkpoints(elsewhere.id, admin, db)[0].code
+    _, token = invited(db, admin, race)
+    clock(START - timedelta(minutes=1))
+    assert status_of(check_in, token, CheckInIn(code=code), db).status_code == 422
+    clock(START + timedelta(minutes=5))
+    for bad in (foreign, "nope"):
+        assert status_of(check_in, token, CheckInIn(code=bad), db).status_code == 404
+    assert check_in(token, CheckInIn(code=code), db) == {"checkpoint": "A", "checked_in_at": START + timedelta(minutes=5)}
+    clock(START + timedelta(minutes=9))
+    assert check_in(token, CheckInIn(code=code), db)["checked_in_at"] == START + timedelta(minutes=5)
+    assert [(c["rider"], c["checkpoint"]) for c in checkins(race.id, admin, db)] == [("Rider", "A")]
+    assert status_of(checkins, race.id, other, db).status_code == 404
+    assert status_of(check_in, "unknown-token", CheckInIn(code=code), db).status_code == 404
+
+
+def test_help_request_with_or_without_position_reaches_owner_and_resolves(db, clock):
+    admin = new_admin(db, "help@example.test")
+    other = new_admin(db, "help-other@example.test")
+    race = published_race(db, admin, "Help")
+    created, token = invited(db, admin, race)
+    clock(START - timedelta(hours=1))  # before the start still counts: help is never refused on a clock
+    first = ask_help(token, HelpIn(kind="medical", latitude=19.4, longitude=-99.1), db)
+    ask_help(token, HelpIn(kind="mechanical"), db)
+    for bad in (HelpIn(kind="pizza"), HelpIn(kind="other", latitude=19.4), HelpIn(kind="other", latitude=99, longitude=0)):
+        assert status_of(ask_help, token, bad, db).status_code == 422
+    listed = help_requests(race.id, admin, db)
+    assert {(h["kind"], h["latitude"], h["phone"]) for h in listed} == {("medical", 19.4, "+5255"), ("mechanical", None, "+5255")}
+    assert status_of(help_requests, race.id, other, db).status_code == 404
+    assert status_of(resolve_help, first["id"], other, db).status_code == 404
+    assert resolve_help(first["id"], admin, db)["resolved_at"] == START - timedelta(hours=1)
+    revoke(created["id"], admin, db)
+    assert status_of(ask_help, token, HelpIn(kind="other"), db).status_code == 404
+
+
+def test_migration_0005_gives_existing_checkpoints_unique_codes(tmp_path):
+    url = f"sqlite:///{tmp_path}/migrate.db"
+    backend = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    env = {**os.environ, "DATABASE_URL": url}
+    alembic = lambda target: subprocess.run([sys.executable, "-m", "alembic", "upgrade", target], cwd=backend, env=env, check=True)
+    alembic("0004_rider_positions")
+    with sqlite3.connect(tmp_path / "migrate.db") as conn:
+        conn.execute("insert into organizers (id, email, role, created_at) values (1, 'a@x', 'admin', '2030-01-01')")
+        conn.execute("insert into races (id, organizer_id, name, start_label, latitude, longitude, starts_at, ends_at, status) "
+                     "values (1, 1, 'Old', 'Park', 0, 0, '2030-01-01', '2030-01-02', 'published')")
+        conn.execute("insert into checkpoints (race_id, name, latitude, longitude, active) values (1, 'A', 0, 0, 1), (1, 'B', 0, 0, 1)")
+    alembic("head")
+    with sqlite3.connect(tmp_path / "migrate.db") as conn:
+        codes = [row[0] for row in conn.execute("select code from checkpoints")]
+    assert len(set(codes)) == 2 and all(codes)

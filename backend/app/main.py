@@ -1,10 +1,10 @@
 from pathlib import Path
 from fastapi import FastAPI
 from fastapi.responses import FileResponse
-from .routers import admin, auth, invitations, races
+from .routers import admin, auth, invitations, live, races
 
 app = FastAPI(title="Alleycat Safety API")
-for module in (auth, admin, races, invitations):
+for module in (auth, admin, races, invitations, live):
     app.include_router(module.router)
 
 WEB_DIST = (Path(__file__).resolve().parents[2] / "web" / "dist").resolve()

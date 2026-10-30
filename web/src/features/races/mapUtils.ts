@@ -16,9 +16,11 @@ export const fromLocalInput = (value: string) => new Date(value).toISOString();
 export const formatWhen = (iso: string) =>
   asDate(iso).toLocaleString("es", {dateStyle: "medium", timeStyle: "short"});
 
+export const formatTime = (iso: string) => asDate(iso).toLocaleTimeString("es", {timeStyle: "short"});
+
 /** "HH:MM del <fecha>" in the viewer's local time, for the checkpoint release moment. */
 export const formatRelease = (iso: string) =>
-  `${asDate(iso).toLocaleTimeString("es", {timeStyle: "short"})} del ${asDate(iso).toLocaleDateString("es", {dateStyle: "medium"})}`;
+  `${formatTime(iso)} del ${asDate(iso).toLocaleDateString("es", {dateStyle: "medium"})}`;
 
 /** Display only: the server alone decides whether checkpoints are sent to guests. */
 export const msUntil = (iso: string, now = Date.now()) => asDate(iso).getTime() - now;

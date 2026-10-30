@@ -1,22 +1,24 @@
 import {Fragment, useEffect, useState, type FormEvent} from "react";
 import {MapContainer, Marker, TileLayer, Tooltip} from "react-leaflet";
 import L from "./features/races/leaflet";
-import {ApiError, errorText, request, setOnUnauthorized, type Me, type Race} from "./api/client";
+import {ApiError, errorText, request, setOnUnauthorized, type HelpKind, type Me, type Race} from "./api/client";
 import {RaceEditor, RaceForm} from "./features/races/RaceEditor";
 import {InvitationPanel} from "./features/invitations/InvitationPanel";
 import {AdminPanel} from "./features/admin/AdminPanel";
-import {formatRelease, formatWhen, pinsForDisplay} from "./features/races/mapUtils";
+import {useBusy} from "./useBusy";
+import {HELP_LABEL, RaceDay} from "./features/races/RaceDay";
+import {formatRelease, formatTime, formatWhen, pinsForDisplay} from "./features/races/mapUtils";
 
 /** token null = malformed link: show the safe invalid state without calling the API. */
-export type Route = {view: "invite" | "consume"; token: string | null} | {view: "app"};
+export type Route = {view: "invite" | "consume" | "checkin"; token: string | null} | {view: "app"};
 
 /** Page loads only: these GETs are SPA routes; the API answers the matching POSTs. */
 export function route(pathname: string): Route {
-  const match = pathname.match(/^\/(invite|auth\/consume)\/([^/]+)\/?$/);
+  const match = pathname.match(/^\/(invite|auth\/consume|checkin)\/([^/]+)\/?$/);
   if (!match) return {view: "app"};
   let token: string | null = null;
   try { token = decodeURIComponent(match[2]); } catch { /* malformed escape */ }
-  return {view: match[1] === "invite" ? "invite" : "consume", token};
+  return {view: match[1] === "auth/consume" ? "consume" : match[1] as "invite" | "checkin", token};
 }
 
 export function App() {
@@ -27,6 +29,7 @@ export function App() {
       <header className="brand"><a href="/">Alleycat Safety</a></header>
       {current.view === "invite" ? <InviteView token={current.token} />
         : current.view === "consume" ? <ConsumeView token={current.token} onDone={goHome} />
+        : current.view === "checkin" ? <CheckInView code={current.token} />
         : <Shell />}
     </main>
   );
@@ -38,19 +41,19 @@ type InviteSummary = {race: {name: string; start_label: string; starts_at: strin
 const REFRESH_MS = 30_000;
 const RETRY_MS = 5_000; // after a failed refresh, so a blip doesn't push the next try a full cycle away
 /** stale: the last refresh failed on the network, so `value` is the previous good answer. */
-type Load<T> = {state: "loading"} | {state: "ok"; value: T; stale?: boolean} | {state: "invalid"} | {state: "retry"; message: string};
+type Load<T> = {state: "loading"} | {state: "ok"; value: T; stale?: boolean} | {state: "invalid"; message?: string} | {state: "retry"; message: string};
 
 /** POSTs a link token once per attempt. 4xx = safe invalid state; network/5xx = retry, not "invalid". */
-function useTokenPost<T>(path: string | null, onOk?: (value: T) => void) {
+function useTokenPost<T>(path: string | null, onOk?: (value: T) => void, json?: unknown) {
   const [attempt, setAttempt] = useState(0);
   const [load, setLoad] = useState<Load<T>>(path ? {state: "loading"} : {state: "invalid"});
   useEffect(() => {
     if (!path) return;
     setLoad(prev => (prev.state === "ok" ? prev : {state: "loading"})); // refreshes keep showing the last value
-    request<T>(path, {method: "POST"}).then(
+    request<T>(path, {method: "POST", json}).then(
       value => { setLoad({state: "ok", value}); onOk?.(value); },
       error => setLoad(prev => error instanceof ApiError && error.status >= 400 && error.status < 500
-        ? {state: "invalid"} : prev.state === "ok" ? {...prev, stale: true} : {state: "retry", message: errorText(error)}),
+        ? {state: "invalid", message: error.message} : prev.state === "ok" ? {...prev, stale: true} : {state: "retry", message: errorText(error)}),
     );
   }, [path, attempt]); // eslint-disable-line react-hooks/exhaustive-deps
   return [load, () => setAttempt(n => n + 1)] as const;
@@ -65,8 +68,13 @@ function Retry({message, onRetry}: {message: string; onRetry: () => void}) {
   );
 }
 
+/** The checkpoint QR opens a separate page, so the rider's invitation token is remembered on this phone. */
+const INVITE_KEY = "alleycat.invite";
+const remember = (token: string) => { try { localStorage.setItem(INVITE_KEY, token); } catch { /* storage blocked */ } };
+const remembered = () => { try { return localStorage.getItem(INVITE_KEY); } catch { return null; } };
+
 export function InviteView({token}: {token: string | null}) {
-  const [load, retry] = useTokenPost<InviteSummary>(token === null ? null : `/invite/${encodeURIComponent(token)}`);
+  const [load, retry] = useTokenPost<InviteSummary>(token === null ? null : `/invite/${encodeURIComponent(token)}`, () => token && remember(token));
   const waiting = load.state === "ok" && !load.value.race.checkpoints;
   const stale = load.state === "ok" && !!load.stale;
   useEffect(() => {
@@ -84,9 +92,65 @@ export function InviteView({token}: {token: string | null}) {
       <h1>{race.name}</h1>
       <p><strong>Salida:</strong> {race.start_label}</p>
       <p><strong>Horario:</strong> {formatWhen(race.starts_at)} – {formatWhen(race.ends_at)}</p>
+      {token && <HelpButtons token={token} />}
       {race.checkpoints ? <GuestCheckpoints pins={race.checkpoints} />
         : <p className="notice" role="status">Los checkpoints se publican a las {formatRelease(race.checkpoints_release_at)}. Deja esta página abierta: aparecerán solos.</p>}
       <p className="notice">El registro de corredores llegará en una próxima versión. Guarda este enlace.</p>
+    </section>
+  );
+}
+
+const KINDS: HelpKind[] = ["medical", "accident", "mechanical", "other"];
+const FIX_TIMEOUT_MS = 10_000;
+
+/** The current position, or null: a help request must go out even without GPS. */
+const currentPosition = () => new Promise<GeolocationCoordinates | null>(resolve => {
+  if (!navigator.geolocation) return resolve(null);
+  navigator.geolocation.getCurrentPosition(p => resolve(p.coords), () => resolve(null), {enableHighAccuracy: true, timeout: FIX_TIMEOUT_MS});
+});
+
+function HelpButtons({token}: {token: string}) {
+  const [busy, guard] = useBusy();
+  const [status, setStatus] = useState("");
+  const ask = (kind: HelpKind) => guard(async () => {
+    if (!confirm(`¿Enviar solicitud de auxilio: ${HELP_LABEL[kind]}?`)) return;
+    setStatus("Enviando solicitud…");
+    const coords = await currentPosition();
+    try {
+      await request(`/invite/${encodeURIComponent(token)}/help`, {method: "POST",
+        json: {kind, latitude: coords?.latitude ?? null, longitude: coords?.longitude ?? null}});
+      setStatus(coords ? "Solicitud enviada con tu ubicación. La organización ya fue avisada." : "Solicitud enviada sin ubicación (no se pudo obtener). La organización ya fue avisada.");
+    } catch (e) {
+      setStatus(`No se pudo enviar: ${errorText(e)} Si es urgente, llama a la organización.`);
+    }
+  });
+  return (
+    <div className="stack">
+      <h2>¿Necesitas ayuda?</h2>
+      <div className="help-grid">
+        {KINDS.map(kind => <button key={kind} className="btn-danger" disabled={busy} onClick={() => ask(kind)}>{HELP_LABEL[kind]}</button>)}
+      </div>
+      {status && <p role="status">{status}</p>}
+    </div>
+  );
+}
+
+type CheckInResult = {checkpoint: string; checked_in_at: string};
+
+/** Opened by the phone camera from a checkpoint QR; the rider is identified by the invitation opened earlier on this phone. */
+export function CheckInView({code}: {code: string | null}) {
+  const token = remembered();
+  const [load, retry] = useTokenPost<CheckInResult>(code && token ? `/invite/${encodeURIComponent(token)}/checkins` : null, undefined,
+    {code});
+  if (!token) return <section className="card stack"><h1>Abre primero tu invitación</h1><p>Abre en este teléfono el enlace de invitación que te enviaron y vuelve a escanear el QR del checkpoint.</p></section>;
+  if (load.state === "retry") return <Retry message={load.message} onRetry={retry} />;
+  if (load.state === "loading") return <p role="status">Registrando checkpoint…</p>;
+  if (load.state === "invalid") return <section className="card stack"><h1>No se pudo registrar</h1><p>{load.message ?? "Este QR no es válido para tu carrera."}</p><a className="btn-secondary" href={`/invite/${encodeURIComponent(token)}`}>Volver a mi invitación</a></section>;
+  return (
+    <section className="card stack">
+      <h1>Checkpoint registrado</h1>
+      <p><strong>{load.value.checkpoint}</strong> a las {formatTime(load.value.checked_in_at)}.</p>
+      <a className="btn-primary" href={`/invite/${encodeURIComponent(token)}`}>Volver a mi invitación</a>
     </section>
   );
 }
@@ -215,6 +279,7 @@ function Dashboard({me}: {me: Me}) {
         <Fragment key={selected.id}>{/* remount per race: no state leaks between races */}
           <RaceEditor race={selected} onChanged={replace} />
           <InvitationPanel raceId={selected.id} published={selected.status === "published"} />
+          {selected.status === "published" && <RaceDay race={selected} />}
         </Fragment>
       )}
       {me.role === "superadmin" && <AdminPanel />}

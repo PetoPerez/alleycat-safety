@@ -28,6 +28,14 @@ def response(invitation: Invitation, link: str):
             "expires_at": invitation.expires_at, **({"link": link} if show else {})}
 
 
+def active_invitation(token: str, db: Session) -> Invitation:
+    """The invitation token is the rider's only credential."""
+    item = db.query(Invitation).filter_by(token_hash=token_hash(token)).first()
+    if not item or not service.active(item):
+        raise HTTPException(404, "This invitation is invalid, expired, revoked, or already used")
+    return item
+
+
 def owned_invitation(invitation_id: int, account, db: Session) -> Invitation:
     item = db.get(Invitation, invitation_id)
     if not item:
@@ -98,9 +106,7 @@ def resend(invitation_id: int, account=Depends(organizer), db: Session = Depends
 # POST, not GET: the SPA owns GET /invite/{token}, and link-preview bots must not mark invitations opened.
 @router.post("/invite/{token}")
 def open_invite(token: str, db: Session = Depends(get_db)):
-    item = db.query(Invitation).filter_by(token_hash=token_hash(token)).first()
-    if not item or not service.active(item):
-        raise HTTPException(404, "This invitation is invalid, expired, revoked, or already used")
+    item = active_invitation(token, db)
     if not item.opened_at:
         item.opened_at = utcnow()
         item.delivery_status = "opened"
@@ -114,3 +120,4 @@ def open_invite(token: str, db: Session = Depends(get_db)):
         pins = db.query(Checkpoint).filter_by(race_id=race.id, active=True).order_by(Checkpoint.name).all()
         summary["checkpoints"] = [{"name": p.name, "latitude": p.latitude, "longitude": p.longitude} for p in pins]
     return {"race": summary, "next": "Registration will be available in a later release."}
+
