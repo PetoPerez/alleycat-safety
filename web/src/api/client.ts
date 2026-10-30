@@ -47,6 +47,7 @@ const MESSAGES: Record<string, string> = {
   "Too far from the checkpoint": "Estás demasiado lejos del checkpoint. Acércate y vuelve a intentarlo.",
   "Unknown help type": "Tipo de ayuda no válido.",
   "Help request not found": "No se encontró la solicitud de ayuda.",
+  "Only finished races can be deleted": "Sólo se pueden eliminar carreras que ya terminaron.",
 };
 const BY_STATUS: Record<number, string> = {
   401: MESSAGES["Organizer authentication required"], 403: "No tienes permiso para hacer esto.",

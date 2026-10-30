@@ -19,6 +19,7 @@ class Rider(Base):
     __tablename__ = "riders"
     id: Mapped[int] = mapped_column(primary_key=True)
     organizer_id: Mapped[int] = mapped_column(ForeignKey("organizers.id"))
+    race_id: Mapped[int | None] = mapped_column(ForeignKey("races.id"), nullable=True)  # each race has its own roster; null only for pre-0006 riders
     name: Mapped[str] = mapped_column(String)
     email: Mapped[str | None] = mapped_column(String, nullable=True)
     phone: Mapped[str | None] = mapped_column(String, nullable=True)

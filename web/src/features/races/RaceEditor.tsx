@@ -14,6 +14,9 @@ export function RaceForm({initial, submitLabel, onSubmit}: {initial?: Race; subm
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [message, setMessage] = useState("");
   const [busy, setBusy] = useState(false);
+  const [start, setStart] = useState({lat: String(initial?.latitude ?? 19.4326), lng: String(initial?.longitude ?? -99.1332)});
+  const startLat = coordinate(start.lat, 90);
+  const startLng = coordinate(start.lng, 180);
   const submit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     const data = new FormData(event.currentTarget);
@@ -55,9 +58,15 @@ export function RaceForm({initial, submitLabel, onSubmit}: {initial?: Race; subm
     <form className="stack" onSubmit={submit} noValidate>
       {field("name", "Nombre", {defaultValue: initial?.name})}
       {field("start_label", "Zona de salida", {defaultValue: initial?.start_label})}
+      <p className="muted">Toca el mapa para elegir el punto de salida, o escribe sus coordenadas.</p>
+      <MapContainer center={[startLat ?? 19.4326, startLng ?? -99.1332]} zoom={14} className="checkpoint-map">
+        <TileLayer attribution="&copy; OpenStreetMap contributors" url="https://tile.openstreetmap.org/{z}/{x}/{y}.png" />
+        <PinChooser onSelect={(la, ln) => setStart({lat: la.toFixed(6), lng: ln.toFixed(6)})} />
+        {startLat !== null && startLng !== null && <Marker position={[startLat, startLng]} icon={chosenIcon} interactive={false} />}
+      </MapContainer>
       <div className="row">
-        {field("latitude", "Latitud de salida", {type: "number", step: "any", defaultValue: initial?.latitude ?? 19.4326})}
-        {field("longitude", "Longitud de salida", {type: "number", step: "any", defaultValue: initial?.longitude ?? -99.1332})}
+        {field("latitude", "Latitud de salida", {type: "number", step: "any", value: start.lat, onChange: e => setStart({...start, lat: e.target.value})})}
+        {field("longitude", "Longitud de salida", {type: "number", step: "any", value: start.lng, onChange: e => setStart({...start, lng: e.target.value})})}
       </div>
       <div className="row">
         {field("starts_at", "Inicio (hora local)", {type: "datetime-local", defaultValue: initial && toLocalInput(initial.starts_at)})}

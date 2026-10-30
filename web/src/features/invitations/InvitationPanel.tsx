@@ -46,7 +46,7 @@ export function InvitationPanel({raceId, published}: {raceId: number; published:
   const fail = (error: unknown) => setNotice({text: errorText(error), error: true});
 
   const refresh = async () => {
-    const [roster, issued] = await Promise.all([request<Rider[]>("/riders"), request<Invitation[]>(`/races/${raceId}/invitations`)]);
+    const [roster, issued] = await Promise.all([request<Rider[]>(`/races/${raceId}/riders`), request<Invitation[]>(`/races/${raceId}/invitations`)]);
     setRiders(roster);
     setInvitations(issued);
     return issued;
@@ -63,7 +63,7 @@ export function InvitationPanel({raceId, published}: {raceId: number; published:
     guard(async () => {
       setRiderErrors({});
       try {
-        const created = await request<Rider>("/riders", {method: "POST", json: {name: rider.name, email: rider.email || null, phone: rider.phone || null}});
+        const created = await request<Rider>(`/races/${raceId}/riders`, {method: "POST", json: {name: rider.name, email: rider.email || null, phone: rider.phone || null}});
         setRiders(list => [...list, created].sort((a, b) => a.name.localeCompare(b.name)));
         setRiderId(String(created.id));
         setRider({name: "", email: "", phone: ""});
@@ -125,7 +125,7 @@ export function InvitationPanel({raceId, published}: {raceId: number; published:
       <h2 id="invites-title">Corredores e invitaciones</h2>
 
       <details>
-        <summary>Añadir corredor al padrón</summary>
+        <summary>Añadir corredor al padrón de esta carrera</summary>
         <form className="stack" onSubmit={addRider} noValidate>
           <label>Nombre
             <input value={rider.name} onChange={e => setRider({...rider, name: e.target.value})} aria-invalid={!!riderErrors.name} />

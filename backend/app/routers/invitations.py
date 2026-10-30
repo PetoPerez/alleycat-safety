@@ -52,7 +52,7 @@ def invite(race_id: int, body: InviteIn, account=Depends(organizer), db: Session
     if race.ends_at <= utcnow():
         raise HTTPException(422, ENDED)
     rider = db.get(Rider, body.rider_id)
-    if not rider or rider.organizer_id != account.id:
+    if not rider or rider.race_id != race.id:
         raise HTTPException(404, "Rider not found")
     if body.channel not in ("email", "whatsapp"):
         raise HTTPException(422, "Unsupported delivery channel")

@@ -3,7 +3,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import AwareDatetime, BaseModel, ConfigDict
 from sqlalchemy.orm import Session
 from ..database import get_db, utcnow
-from ..models import Checkpoint, Race, Rider
+from ..models import CheckIn, Checkpoint, HelpRequest, Invitation, InvitationEvent, Race, Rider, RiderPosition
 from ..services import races as race_service
 from .auth import organizer
 
@@ -108,8 +108,9 @@ def draft_for(race_id: int, account, db: Session) -> Race:
     return race
 
 
-@router.post("/riders", response_model=RiderOut)
-def create_rider(body: RiderIn, account=Depends(organizer), db: Session = Depends(get_db)):
+@router.post("/races/{race_id}/riders", response_model=RiderOut)
+def create_rider(race_id: int, body: RiderIn, account=Depends(organizer), db: Session = Depends(get_db)):
+    race_for(race_id, account, db)
     name = body.name.strip()
     email = (body.email or "").strip().lower() or None
     phone = (body.phone or "").strip() or None
@@ -117,16 +118,17 @@ def create_rider(body: RiderIn, account=Depends(organizer), db: Session = Depend
         field_error("name", "Rider name cannot be blank")
     if not email and not phone:
         field_error("email", "Email or phone is required")
-    rider = Rider(organizer_id=account.id, name=name, email=email, phone=phone)
+    rider = Rider(organizer_id=account.id, race_id=race_id, name=name, email=email, phone=phone)
     db.add(rider)
     db.commit()
     db.refresh(rider)
     return rider
 
 
-@router.get("/riders", response_model=list[RiderOut])
-def list_riders(account=Depends(organizer), db: Session = Depends(get_db)):
-    return db.query(Rider).filter_by(organizer_id=account.id).order_by(Rider.name).all()
+@router.get("/races/{race_id}/riders", response_model=list[RiderOut])
+def list_riders(race_id: int, account=Depends(organizer), db: Session = Depends(get_db)):
+    race_for(race_id, account, db)
+    return db.query(Rider).filter_by(race_id=race_id).order_by(Rider.name).all()
 
 
 @router.post("/races", response_model=RaceOut)
@@ -158,6 +160,26 @@ def list_races(account=Depends(organizer), db: Session = Depends(get_db)):
 @router.get("/races/{race_id}", response_model=RaceOut)
 def get_race(race_id: int, account=Depends(organizer), db: Session = Depends(get_db)):
     return race_for(race_id, account, db)
+
+
+@router.delete("/races/{race_id}", status_code=204)
+def delete_race(race_id: int, account=Depends(organizer), db: Session = Depends(get_db)):
+    """Only finished races: deleting one mid-event would erase help requests still being handled."""
+    race = race_for(race_id, account, db)
+    if race.ends_at > utcnow():
+        raise HTTPException(422, "Only finished races can be deleted")
+    pins = db.query(Checkpoint.id).filter_by(race_id=race_id)
+    invitations = db.query(Invitation.id).filter_by(race_id=race_id)
+    riders = db.query(Rider.id).filter_by(race_id=race_id)
+    # Children first: the foreign keys have no ON DELETE CASCADE.
+    for query in (db.query(CheckIn).filter(CheckIn.checkpoint_id.in_(pins) | CheckIn.rider_id.in_(riders)),
+                  db.query(InvitationEvent).filter(InvitationEvent.invitation_id.in_(invitations)),
+                  db.query(Invitation).filter_by(race_id=race_id), db.query(RiderPosition).filter_by(race_id=race_id),
+                  db.query(HelpRequest).filter_by(race_id=race_id), db.query(Checkpoint).filter_by(race_id=race_id),
+                  db.query(Rider).filter_by(race_id=race_id)):
+        query.delete(synchronize_session=False)
+    db.delete(race)
+    db.commit()
 
 
 @router.post("/races/{race_id}/checkpoints", response_model=CheckpointOut)

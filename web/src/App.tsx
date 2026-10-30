@@ -280,6 +280,17 @@ function Dashboard({me}: {me: Me}) {
   const [error, setError] = useState("");
   useEffect(() => { request<Race[]>("/races").then(setRaces, e => setError(errorText(e))); }, []);
   const selected = races.find(r => r.id === selectedId);
+  const [busy, guard] = useBusy();
+  const remove = (race: Race) => {
+    if (!window.confirm(`¿Eliminar «${race.name}»? Se borran sus checkpoints, corredores, invitaciones y check-ins. No se puede deshacer.`)) return;
+    guard(async () => {
+      setError("");
+      try {
+        await request(`/races/${race.id}`, {method: "DELETE"});
+        setRaces(list => list.filter(r => r.id !== race.id));
+      } catch (e) { setError(errorText(e)); }
+    });
+  };
   const replace = (race: Race) => setRaces(list => list.some(r => r.id === race.id) ? list.map(r => (r.id === race.id ? race : r)) : [...list, race]);
 
   return (
@@ -302,6 +313,8 @@ function Dashboard({me}: {me: Me}) {
                 {r.name}
               </button>
               <span className={`badge ${r.status}`}>{r.status === "draft" ? "Borrador" : "Publicada"}</span>
+              {Date.parse(r.ends_at) <= Date.now() &&
+                <button className="btn-danger" disabled={busy} onClick={() => remove(r)} aria-label={`Eliminar ${r.name}`}>Eliminar</button>}
             </li>
           ))}
           {!races.length && !error && <li className="muted">Aún no tienes carreras.</li>}

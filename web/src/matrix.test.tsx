@@ -58,7 +58,7 @@ describe("matrix", () => {
   it("Editar carrera: 422 errors land under the field named by loc", async () => {
     mockApi({
       "GET /auth/me": {body: admin}, "GET /races": {body: [race(1, "Uno")]}, "GET /races/1/checkpoints": {body: []},
-      "GET /riders": {body: []}, "GET /races/1/invitations": {body: []},
+      "GET /races/1/riders": {body: []}, "GET /races/1/invitations": {body: []},
       "PUT /races/1": {status: 422, body: {detail: [{loc: ["body", "ends_at"], msg: "End time must be after start time"}]}},
     });
     await render(<App />);
@@ -76,7 +76,7 @@ describe("matrix", () => {
       "GET /auth/me": {body: admin}, "GET /races": {body: [race(1, "Uno"), race(2, "Dos", "published")]},
       "GET /races/1/checkpoints": {body: [{id: 11, name: "Pin de Uno", latitude: 19.4, longitude: -99.1}]},
       "GET /races/2/checkpoints": {body: [{id: 21, name: "Pin de Dos", latitude: 19.4, longitude: -99.1}]},
-      "GET /riders": {body: [{id: 5, name: "Ana", email: "a@x"}]},
+      "GET /races/1/riders": {body: []}, "GET /races/2/riders": {body: [{id: 5, name: "Ana", email: "a@x"}]},
       "GET /races/1/invitations": {body: []},
       "GET /races/2/invitations": {body: [{id: 7, rider_id: 5, channel: "email", expires_at: "2026-11-05T00:00:00Z", delivery_status: "sent", state: "sent"}]},
     });
@@ -99,7 +99,7 @@ describe("matrix", () => {
       "GET /races/2/checkpoints": {body: [{id: 21, name: "Fijo", latitude: 19.4, longitude: -99.1}]},
       "POST /races/1/checkpoints": () => { pins = [{id: 12, name: "Puente", latitude: 19.43, longitude: -99.13}]; return {body: pins[0]}; },
       "DELETE /races/1/checkpoints/12": () => { pins = []; return {status: 204}; },
-      "GET /riders": {body: []}, "GET /races/1/invitations": {body: []}, "GET /races/2/invitations": {body: []},
+      "GET /races/1/riders": {body: []}, "GET /races/2/riders": {body: []}, "GET /races/1/invitations": {body: []}, "GET /races/2/invitations": {body: []},
     });
     await render(<App />);
     await click(button("Uno"));
@@ -124,7 +124,7 @@ describe("matrix", () => {
   it("Pin: API error is visible", async () => {
     mockApi({
       "GET /auth/me": {body: admin}, "GET /races": {body: [race(1, "Uno")]}, "GET /races/1/checkpoints": {body: []},
-      "GET /riders": {body: []}, "GET /races/1/invitations": {body: []},
+      "GET /races/1/riders": {body: []}, "GET /races/1/invitations": {body: []},
       "POST /races/1/checkpoints": {status: 422, body: {detail: [{loc: ["body", "latitude"], msg: "Invalid coordinates"}]}},
     });
     await render(<App />);
@@ -141,7 +141,7 @@ describe("matrix", () => {
     mockApi({
       "GET /auth/me": {body: admin}, "GET /races": {body: [race(1, "Uno")]},
       "GET /races/1/checkpoints": () => ({body: pins}),
-      "GET /riders": {body: []}, "GET /races/1/invitations": {body: []},
+      "GET /races/1/riders": {body: []}, "GET /races/1/invitations": {body: []},
       "POST /races/1/publish": {body: race(1, "Uno", "published")},
     });
     await render(<App />);
@@ -155,7 +155,7 @@ describe("matrix", () => {
     mockApi({
       "GET /auth/me": {body: admin}, "GET /races": {body: [race(1, "Uno")]},
       "GET /races/1/checkpoints": () => ({body: pins}),
-      "GET /riders": {body: []}, "GET /races/1/invitations": {body: []},
+      "GET /races/1/riders": {body: []}, "GET /races/1/invitations": {body: []},
       "POST /races/1/publish": {body: race(1, "Uno", "published")},
     });
     const confirm = vi.spyOn(window, "confirm").mockReturnValue(true);
@@ -174,7 +174,7 @@ describe("matrix", () => {
     mockApi({
       "GET /auth/me": {body: admin}, "GET /races": {body: [race(1, "Uno", "published")]},
       "GET /races/1/checkpoints": {body: []},
-      "GET /riders": {body: [{id: 5, name: "Ana", phone: "555"}]},
+      "GET /races/1/riders": {body: [{id: 5, name: "Ana", phone: "555"}]},
       "GET /races/1/invitations": () => ({body: invites}),
       "POST /races/1/invitations": () => {
         if (conflict) return {status: 409, body: {detail: "Active invitation exists; resend or revoke it"}};
@@ -249,7 +249,7 @@ describe("matrix", () => {
 
   const published = (invites: () => object[], extra: Record<string, unknown> = {}) => mockApi({
     "GET /auth/me": {body: admin}, "GET /races": {body: [race(1, "Uno", "published")]},
-    "GET /races/1/checkpoints": {body: []}, "GET /riders": {body: [{id: 5, name: "Ana", phone: "555"}]},
+    "GET /races/1/checkpoints": {body: []}, "GET /races/1/riders": {body: [{id: 5, name: "Ana", phone: "555"}]},
     "GET /races/1/invitations": () => ({body: invites()}), ...extra,
   } as Parameters<typeof mockApi>[0]);
   const inv = (id: number, state: string) => ({id, rider_id: 5, channel: "whatsapp", expires_at: "2026-11-05T00:00:00Z", delivery_status: state, state});
@@ -303,7 +303,7 @@ describe("matrix", () => {
     const api = mockApi({
       "GET /auth/me": {body: admin}, "GET /races": {body: []},
       "POST /races": {body: race(3, "Nueva")}, "GET /races/3/checkpoints": {body: []},
-      "GET /riders": {body: []}, "GET /races/3/invitations": {body: []},
+      "GET /races/3/riders": {body: []}, "GET /races/3/invitations": {body: []},
     });
     await render(<App />);
     await click(button("Nueva carrera"));
@@ -333,7 +333,7 @@ describe("matrix", () => {
   it("Editar carrera: a successful save updates the editor", async () => {
     mockApi({
       "GET /auth/me": {body: admin}, "GET /races": {body: [race(1, "Uno")]}, "GET /races/1/checkpoints": {body: []},
-      "GET /riders": {body: []}, "GET /races/1/invitations": {body: []},
+      "GET /races/1/riders": {body: []}, "GET /races/1/invitations": {body: []},
       "PUT /races/1": {body: race(1, "Uno bis")},
     });
     await render(<App />);
@@ -344,7 +344,7 @@ describe("matrix", () => {
 
   it("Añadir corredor: blank contact is null, rider preselected; 422 lands under the field", async () => {
     let reject = false;
-    const api = published(() => [], {"POST /riders": () => reject
+    const api = published(() => [], {"POST /races/1/riders": () => reject
       ? {status: 422, body: {detail: [{loc: ["body", "name"], msg: "Rider name cannot be blank"}]}}
       : {body: {id: 6, name: "Beto", email: null, phone: "777"}}});
     await render(<App />);
@@ -353,7 +353,7 @@ describe("matrix", () => {
     await type(field("Nombre", panel), "Beto");
     await type(field("Teléfono", panel), "777");
     await submit(button("Añadir corredor").closest("form")!);
-    expect(api.calls.find(c => c.key === "POST /riders")!.body).toEqual({name: "Beto", email: null, phone: "777"});
+    expect(api.calls.find(c => c.key === "POST /races/1/riders")!.body).toEqual({name: "Beto", email: null, phone: "777"});
     expect(field("Corredor", panel).value).toBe("6");
     reject = true;
     await type(field("Teléfono", panel), "1");
@@ -378,7 +378,7 @@ describe("matrix", () => {
     mockApi({
       "GET /auth/me": {body: admin}, "GET /races": {body: [race(1, "Uno")]},
       "GET /races/1/checkpoints": {status: 401, body: {detail: "Organizer authentication required"}},
-      "GET /riders": {status: 401, body: {}}, "GET /races/1/invitations": {status: 401, body: {}},
+      "GET /races/1/riders": {status: 401, body: {}}, "GET /races/1/invitations": {status: 401, body: {}},
     });
     await render(<App />);
     await click(button("Uno"));
@@ -477,7 +477,7 @@ describe("matrix", () => {
       "GET /auth/me": {body: admin},
       "GET /races": {body: [{...race(1, "Pasada", "published"), checkpoints_release_at: "2000-01-01T00:00:00Z"},
                             {...race(2, "Pronto", "published"), checkpoints_release_at: new Date(Date.now() + 80).toISOString()}]},
-      "GET /races/1/checkpoints": {body: []}, "GET /races/2/checkpoints": {body: []}, "GET /riders": {body: []},
+      "GET /races/1/checkpoints": {body: []}, "GET /races/2/checkpoints": {body: []}, "GET /races/1/riders": {body: []}, "GET /races/2/riders": {body: []},
       "GET /races/1/invitations": {body: []}, "GET /races/2/invitations": {body: []},
     });
     await render(<App />);
@@ -509,7 +509,7 @@ describe("matrix", () => {
   it("Editar minutos: the form shows the saved value and the PUT carries it", async () => {
     const api = mockApi({
       "GET /auth/me": {body: admin}, "GET /races": {body: [{...race(1, "Uno"), checkpoints_release_minutes: 30}]},
-      "GET /races/1/checkpoints": {body: []}, "GET /riders": {body: []}, "GET /races/1/invitations": {body: []},
+      "GET /races/1/checkpoints": {body: []}, "GET /races/1/riders": {body: []}, "GET /races/1/invitations": {body: []},
       "PUT /races/1": {body: {...race(1, "Uno"), checkpoints_release_minutes: 30}},
     });
     await render(<App />);

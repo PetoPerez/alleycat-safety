@@ -30,7 +30,7 @@ from app.routers.live import (CheckInIn, HelpIn, PositionIn, ask_help, board, ch
                               report_position, resolve_help)
 from app.services.races import distance_m
 from app.routers.races import (CheckpointIn, RaceIn, RiderIn, add_checkpoint, checkpoints, create_race, create_rider,
-                               delete_checkpoint, edit_race, get_race, publish, release_checkpoints)
+                               delete_checkpoint, delete_race, edit_race, get_race, list_riders, publish, release_checkpoints)
 from app.security import token_hash
 from app.services import mailer
 
@@ -133,7 +133,7 @@ class FakeSMTP:
 def test_outside_development_links_are_never_returned(db, monkeypatch, app_env):
     admin = new_admin(db, f"prod-{app_env}@example.test")
     race = published_race(db, admin, "Prod")
-    rider = create_rider(RiderIn(name="R", email="prod-rider@example.test"), admin, db)
+    rider = create_rider(race.id, RiderIn(name="R", email="prod-rider@example.test"), admin, db)
     if app_env:
         monkeypatch.setenv("APP_ENV", app_env)
     else:
@@ -295,8 +295,9 @@ def test_publish_requires_checkpoints_and_locks_the_race(db):
 
 def test_rider_requires_name_and_contact(db):
     admin = new_admin(db, "riders@example.test")
-    assert status_of(create_rider, RiderIn(name="  ", email="x@example.test"), admin, db).status_code == 422
-    assert status_of(create_rider, RiderIn(name="No contact"), admin, db).status_code == 422
+    race = create_race(race_input("Riders"), admin, db)
+    assert status_of(create_rider, race.id, RiderIn(name="  ", email="x@example.test"), admin, db).status_code == 422
+    assert status_of(create_rider, race.id, RiderIn(name="No contact"), admin, db).status_code == 422
 
 
 # --- invitations --------------------------------------------------------------
@@ -304,9 +305,9 @@ def test_rider_requires_name_and_contact(db):
 def test_invite_open_and_duplicate_prevention(db):
     admin = new_admin(db, "invites@example.test")
     draft = create_race(race_input("Draft only"), admin, db)
-    rider = create_rider(RiderIn(name="Rider", email="r@example.test", phone="+5255"), admin, db)
-    assert status_of(invite, draft.id, InviteIn(rider_id=rider.id, channel="whatsapp"), admin, db).status_code == 422
     race = published_race(db, admin)
+    rider = create_rider(race.id, RiderIn(name="Rider", email="r@example.test", phone="+5255"), admin, db)
+    assert status_of(invite, draft.id, InviteIn(rider_id=rider.id, channel="whatsapp"), admin, db).status_code == 422
     created = invite(race.id, InviteIn(rider_id=rider.id, channel="whatsapp"), admin, db)
     assert created["state"] == "sent"
     for channel in ("whatsapp", "email"):
@@ -320,7 +321,7 @@ def test_invite_open_and_duplicate_prevention(db):
 def test_revoke_resend_and_reinvite(db):
     admin = new_admin(db, "reissue@example.test")
     race = published_race(db, admin, "Reissue")
-    rider = create_rider(RiderIn(name="Rider", phone="+525500000000"), admin, db)
+    rider = create_rider(race.id, RiderIn(name="Rider", phone="+525500000000"), admin, db)
     first = invite(race.id, InviteIn(rider_id=rider.id, channel="whatsapp"), admin, db)
     replacement = resend(first["id"], admin, db)
     assert replacement["link"] != first["link"]
@@ -341,7 +342,7 @@ def test_revoke_resend_and_reinvite(db):
 def test_invitation_and_resend_expire_exactly_at_race_end(db):
     admin = new_admin(db, "keep-expiry@example.test")
     race = published_race(db, admin, "Keep expiry")
-    rider = create_rider(RiderIn(name="Rider", phone="+5255"), admin, db)
+    rider = create_rider(race.id, RiderIn(name="Rider", phone="+5255"), admin, db)
     # A client-sent duration is ignored: the organizer cannot choose it.
     first = invite(race.id, InviteIn(rider_id=rider.id, channel="whatsapp", expires_hours=5), admin, db)
     replacement = resend(first["id"], admin, db)
@@ -351,7 +352,7 @@ def test_invitation_and_resend_expire_exactly_at_race_end(db):
 def test_reinvite_after_expiry_shows_expired_not_revoked(db):
     admin = new_admin(db, "expiry@example.test")
     race = published_race(db, admin, "Expiry")
-    rider = create_rider(RiderIn(name="Rider", email="expiry-r@example.test"), admin, db)
+    rider = create_rider(race.id, RiderIn(name="Rider", email="expiry-r@example.test"), admin, db)
     created = invite(race.id, InviteIn(rider_id=rider.id, channel="email"), admin, db)
     db.get(Invitation, created["id"]).expires_at = datetime(2000, 1, 1, tzinfo=UTC)
     db.commit()
@@ -366,7 +367,7 @@ def test_reinvite_after_expiry_shows_expired_not_revoked(db):
 def test_used_and_unknown_invites_do_not_disclose_race(db):
     admin = new_admin(db, "used@example.test")
     race = published_race(db, admin, "Secret Race")
-    rider = create_rider(RiderIn(name="Rider", email="used-r@example.test"), admin, db)
+    rider = create_rider(race.id, RiderIn(name="Rider", email="used-r@example.test"), admin, db)
     created = invite(race.id, InviteIn(rider_id=rider.id, channel="email"), admin, db)
     db.get(Invitation, created["id"]).used_at = datetime.now(UTC)
     db.commit()
@@ -379,7 +380,7 @@ def test_used_and_unknown_invites_do_not_disclose_race(db):
 def test_email_invitation_requires_an_email_address(db):
     admin = new_admin(db, "email-required@example.test")
     race = published_race(db, admin, "Email required")
-    rider = create_rider(RiderIn(name="Phone only", phone="+525500000000"), admin, db)
+    rider = create_rider(race.id, RiderIn(name="Phone only", phone="+525500000000"), admin, db)
     assert status_of(invite, race.id, InviteIn(rider_id=rider.id, channel="email"), admin, db).status_code == 422
 
 
@@ -389,13 +390,15 @@ def test_other_organizers_cannot_touch_races_riders_or_invitations(db):
     race = published_race(db, owner, "Private")
     draft = create_race(race_input("Private draft"), owner, db)
     pin = add_checkpoint(draft.id, CheckpointIn(name="A", latitude=19.41, longitude=-99.11), owner, db)
-    rider = create_rider(RiderIn(name="Owner rider", phone="+5255"), owner, db)
+    rider = create_rider(race.id, RiderIn(name="Owner rider", phone="+5255"), owner, db)
     created = invite(race.id, InviteIn(rider_id=rider.id, channel="whatsapp"), owner, db)
     other_race = published_race(db, other, "Other")
     for call, args in ((get_race, (race.id,)), (checkpoints, (race.id,)), (list_invitations, (race.id,)),
                        (edit_race, (draft.id, race_input("Hijack"))), (delete_checkpoint, (draft.id, pin.id)),
                        (revoke, (created["id"],)), (resend, (created["id"],)),
-                       (invite, (other_race.id, InviteIn(rider_id=rider.id, channel="whatsapp")))):
+                       (invite, (other_race.id, InviteIn(rider_id=rider.id, channel="whatsapp"))),
+                       (list_riders, (race.id,)), (create_rider, (race.id, RiderIn(name="Intruder", phone="+5255"))),
+                       (delete_race, (race.id,))):
         assert status_of(call, *args, other, db).status_code == 404
     assert status_of(organizer, None, db).status_code == 401
 
@@ -413,7 +416,7 @@ def clock(monkeypatch):
 
 
 def invited(db, admin, race):
-    rider = create_rider(RiderIn(name="Rider", phone="+5255"), admin, db)
+    rider = create_rider(race.id, RiderIn(name="Rider", phone="+5255"), admin, db)
     created = invite(race.id, InviteIn(rider_id=rider.id, channel="whatsapp"), admin, db)
     return created, token_of(created["link"])
 
@@ -548,7 +551,7 @@ def test_cannot_invite_or_resend_once_race_ended(db, clock):
     admin = new_admin(db, "ended@example.test")
     race = published_race(db, admin, "Ended")
     created, _ = invited(db, admin, race)
-    other = create_rider(RiderIn(name="Late", phone="+5256"), admin, db)
+    other = create_rider(race.id, RiderIn(name="Late", phone="+5256"), admin, db)
     clock(race.ends_at)
     for call, args in ((invite, (race.id, InviteIn(rider_id=other.id, channel="whatsapp"))), (resend, (created["id"],))):
         exc = status_of(call, *args, admin, db)
@@ -647,7 +650,7 @@ def test_board_lists_invited_riders_checkins_and_open_help_only(db, clock):
     race = published_race(db, admin, "Board")
     pin = checkpoints(race.id, admin, db)[0]
     _, token = invited(db, admin, race)
-    gone = create_rider(RiderIn(name="Gone", phone="+5257"), admin, db)
+    gone = create_rider(race.id, RiderIn(name="Gone", phone="+5257"), admin, db)
     revoke(invite(race.id, InviteIn(rider_id=gone.id, channel="whatsapp"), admin, db)["id"], admin, db)
     clock(START + timedelta(minutes=5))
     check_in(token, at_pin(pin.code), db)
@@ -694,3 +697,37 @@ def test_migration_0005_gives_existing_checkpoints_unique_codes(tmp_path):
     with sqlite3.connect(tmp_path / "migrate.db") as conn:
         codes = [row[0] for row in conn.execute("select code from checkpoints")]
     assert len(set(codes)) == 2 and all(codes)
+
+
+# --- per-race rosters and deletion --------------------------------------------
+
+def test_each_race_has_its_own_roster(db):
+    admin = new_admin(db, "rosters@example.test")
+    first, second = published_race(db, admin, "First"), published_race(db, admin, "Second")
+    rider = create_rider(first.id, RiderIn(name="Same person", phone="+5255"), admin, db)
+    assert [r.name for r in list_riders(first.id, admin, db)] == ["Same person"]
+    assert list_riders(second.id, admin, db) == []
+    assert status_of(invite, second.id, InviteIn(rider_id=rider.id, channel="whatsapp"), admin, db).status_code == 404
+    again = create_rider(second.id, RiderIn(name="Same person", phone="+5255"), admin, db)  # riding every race is fine
+    assert invite(second.id, InviteIn(rider_id=again.id, channel="whatsapp"), admin, db)["state"] == "sent"
+
+
+def test_only_finished_races_can_be_deleted_with_everything_in_them(db, clock):
+    admin = new_admin(db, "delete-race@example.test")
+    race = published_race(db, admin, "Done")
+    keep = published_race(db, admin, "Keep")
+    pin = checkpoints(race.id, admin, db)[0]
+    _, token = invited(db, admin, race)
+    invited(db, admin, keep)
+    clock(START + timedelta(minutes=5))
+    check_in(token, at_pin(pin.code), db)
+    report_position(token, PositionIn(latitude=19.41, longitude=-99.11), db)
+    ask_help(token, HelpIn(kind="other"), db)
+    exc = status_of(delete_race, race.id, admin, db)
+    assert exc.status_code == 422 and exc.detail == "Only finished races can be deleted"
+    clock(race.ends_at)
+    delete_race(race.id, admin, db)
+    assert status_of(get_race, race.id, admin, db).status_code == 404
+    assert db.query(Checkpoint).filter_by(race_id=race.id).count() == 0
+    assert db.query(Invitation).filter_by(race_id=race.id).count() == 0
+    assert len(list_riders(keep.id, admin, db)) == 1 and len(list_invitations(keep.id, admin, db)) == 1
