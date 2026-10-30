@@ -54,6 +54,7 @@ const MESSAGES: Record<string, string> = {
   "Unknown help type": "Tipo de ayuda no válido.",
   "Help request not found": "No se encontró la solicitud de ayuda.",
   "Publish race before choosing a winner": "Publica la carrera antes de elegir ganador.",
+  "Publish race before starting it": "Publica la carrera antes de dar la salida.",
   "Only finished races can be deleted": "Sólo se pueden eliminar carreras que ya terminaron.",
 };
 const BY_STATUS: Record<number, string> = {

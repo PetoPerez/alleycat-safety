@@ -135,7 +135,8 @@ def board(race_id: int, account=Depends(organizer), db: Session = Depends(get_db
     riders = db.query(Rider).filter(Rider.id.in_(rider_ids)).all() if rider_ids else []
     help_open = [h for h in help_requests(race_id, account, db) if not h["resolved_at"]]
     return {"race": {"id": race.id, "name": race.name, "starts_at": race.starts_at, "ends_at": race.ends_at,
-                     "winner_rider_id": race.winner_rider_id},
+                     "winner_rider_id": race.winner_rider_id, "started_at": race.started_at,
+                     "checkpoints_released": race.checkpoints_released},
             "checkpoints": [{"id": p.id, "name": p.name, "finish": p.finish} for p in pins],
             "riders": [{"id": r.id, "name": r.name} for r in riders],
             "checkins": [{"rider_id": v.rider_id, "checkpoint_id": v.checkpoint_id, "checked_in_at": v.checked_in_at} for v in visits],

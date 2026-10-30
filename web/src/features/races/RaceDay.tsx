@@ -98,7 +98,10 @@ export function RaceDay({race, onChanged}: {race: Race; onChanged: (race: Race) 
     <section className="card stack" aria-labelledby="raceday-title">
       <div className="row spread">
         <h2 id="raceday-title">Día de carrera</h2>
-        <a className="btn-secondary" href={`/tablero/${race.id}`} target="_blank" rel="noreferrer">Tablero</a>
+        <div className="row">
+          <a className="btn-secondary" href={`/mapa/${race.id}`} target="_blank" rel="noreferrer">Mapa</a>
+          <a className="btn-secondary" href={`/tablero/${race.id}`} target="_blank" rel="noreferrer">Tablero</a>
+        </div>
       </div>
       {error && <p className="error" role="alert">{error}</p>}
       <h3>Solicitudes de auxilio</h3>

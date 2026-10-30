@@ -40,6 +40,7 @@ class Race(Base):
     checkpoints_released_at: Mapped[datetime | None] = mapped_column(UTCDateTime, nullable=True)  # "release now"; never cleared
     # Chosen by the organizers at the finish line, after checking the rider's checkpoints; not computed.
     winner_rider_id: Mapped[int | None] = mapped_column(ForeignKey("riders.id", use_alter=True), nullable=True)
+    started_at: Mapped[datetime | None] = mapped_column(UTCDateTime, nullable=True)  # the real start whistle; starts_at is only the plan
 
     @property
     def checkpoints_release_at(self) -> datetime:

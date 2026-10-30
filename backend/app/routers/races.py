@@ -57,6 +57,7 @@ class RaceOut(Out):
     checkpoints_release_at: datetime
     checkpoints_released: bool
     winner_rider_id: int | None
+    started_at: datetime | None
 
 
 class CheckpointOut(Out):
@@ -333,6 +334,19 @@ def release_checkpoints(race_id: int, account=Depends(organizer), db: Session = 
     now = utcnow()
     if not race_service.released(race, now):  # already released: idempotent, release time stays put
         race.checkpoints_released_at = now
+        db.commit()
+        db.refresh(race)
+    return race
+
+
+@router.post("/races/{race_id}/start", response_model=RaceOut)
+def start_race(race_id: int, account=Depends(organizer), db: Session = Depends(get_db)):
+    """The start whistle. Idempotent: a second press keeps the first time."""
+    race = race_for(race_id, account, db)
+    if race.status != "published":
+        raise HTTPException(422, "Publish race before starting it")
+    if not race.started_at:
+        race.started_at = utcnow()
         db.commit()
         db.refresh(race)
     return race

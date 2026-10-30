@@ -7,7 +7,8 @@ const POLL_MS = 10_000;
 const FRESH_MS = 2 * 60_000; // arrivals this recent are highlighted so the room notices them
 
 type BoardData = {
-  race: {id: number; name: string; starts_at: string; ends_at: string; winner_rider_id: number | null};
+  race: {id: number; name: string; starts_at: string; ends_at: string; winner_rider_id: number | null; started_at: string | null;
+    checkpoints_released: boolean};
   checkpoints: {id: number; name: string; finish: boolean}[];
   riders: {id: number; name: string}[];
   checkins: {rider_id: number; checkpoint_id: number; checked_in_at: string}[];
@@ -26,7 +27,71 @@ export function standings(data: BoardData) {
   }).sort((a, b) => b.visits.size - a.visits.size || a.last.localeCompare(b.last) || a.rider.name.localeCompare(b.rider.name));
 }
 
-/** Read-only race-day screen for a projector or TV: arrivals per checkpoint and open help requests. */
+/** 3725 → "1:02:05"; 125 → "02:05". */
+export function duration(seconds: number) {
+  const s = Math.floor(Math.abs(seconds)), h = Math.floor(s / 3600);
+  const mmss = `${String(Math.floor(s / 60) % 60).padStart(2, "0")}:${String(s % 60).padStart(2, "0")}`;
+  return h ? `${h}:${mmss}` : mmss;
+}
+
+/** Two-tone referee whistle via Web Audio; silent if the browser blocks audio. */
+function whistle() {
+  try {
+    const ctx = new AudioContext(), osc = ctx.createOscillator(), trill = ctx.createOscillator(), depth = ctx.createGain(), gain = ctx.createGain();
+    osc.frequency.value = 2800;
+    trill.frequency.value = 30; depth.gain.value = 250; // the pea rattling inside the whistle
+    trill.connect(depth).connect(osc.frequency);
+    gain.gain.setValueAtTime(0.4, ctx.currentTime);
+    gain.gain.setTargetAtTime(0, ctx.currentTime + 1.2, 0.05);
+    osc.connect(gain).connect(ctx.destination);
+    [osc, trill].forEach(o => { o.start(); o.stop(ctx.currentTime + 1.5); });
+  } catch { /* no audio: the timer still starts */ }
+}
+
+/** Countdown to the scheduled start, how late it is, then race time since the whistle. */
+function RaceTimer({race, now, onStarted}: {race: BoardData["race"]; now: number; onStarted: (at: string) => void}) {
+  const [error, setError] = useState("");
+  const [busy, setBusy] = useState(false);
+  if (race.started_at) return <div className="board-timer" role="timer"><span className="muted">En carrera</span> {duration((now - Date.parse(race.started_at)) / 1000)}</div>;
+  const left = (Date.parse(race.starts_at) - now) / 1000;
+  const start = async () => {
+    if (!window.confirm("¿Dar el pitazo de salida? El tiempo de carrera empieza a contar ahora.")) return;
+    setBusy(true);
+    whistle(); // before the request: the click is the user gesture that lets audio play
+    try { onStarted((await request<{started_at: string}>(`/races/${race.id}/start`, {method: "POST"})).started_at); setError(""); }
+    catch (e) { setError(errorText(e)); }
+    finally { setBusy(false); }
+  };
+  return (
+    <div className="board-timer" role="timer">
+      <span className="muted">{left > 0 ? "Salida en" : "Retraso"}</span> {duration(left)}
+      <button className="btn-primary" disabled={busy} onClick={start}>Pitazo de salida</button>
+      {error && <p className="error" role="alert">{error}</p>}
+    </div>
+  );
+}
+
+/** Same "Liberar ahora" as the race editor, so the organizer at the board doesn't need the admin screen. */
+function ReleaseButton({race, onReleased}: {race: BoardData["race"]; onReleased: () => void}) {
+  const [error, setError] = useState("");
+  const [busy, setBusy] = useState(false);
+  if (race.checkpoints_released) return null;
+  const release = async () => {
+    if (!window.confirm(`¿Liberar ya los checkpoints de «${race.name}»? Los invitados los verán de inmediato y no se pueden volver a ocultar.`)) return;
+    setBusy(true);
+    try { await request(`/races/${race.id}/release-checkpoints`, {method: "POST"}); setError(""); onReleased(); }
+    catch (e) { setError(errorText(e)); }
+    finally { setBusy(false); }
+  };
+  return (
+    <div>
+      <button className="btn-secondary" disabled={busy} onClick={release}>Liberar checkpoints</button>
+      {error && <p className="error" role="alert">{error}</p>}
+    </div>
+  );
+}
+
+/** Race-day screen for a projector or TV: arrivals per checkpoint, open help requests and the start whistle. */
 export function Board({raceId}: {raceId: string | null}) {
   const [data, setData] = useState<BoardData>();
   const [error, setError] = useState("");
@@ -56,7 +121,10 @@ export function Board({raceId}: {raceId: string | null}) {
           <h1>{data.race.name}</h1>
           <p className="muted">{formatTime(data.race.starts_at)} – {formatTime(data.race.ends_at)} · {data.riders.length} corredores · {data.checkins.length} llegadas</p>
         </div>
+        <RaceTimer race={data.race} now={now} onStarted={at => setData({...data, race: {...data.race, started_at: at}})} />
+        <ReleaseButton race={data.race} onReleased={() => setData({...data, race: {...data.race, checkpoints_released: true}})} />
         <div className="board-clock">{new Date(now).toLocaleTimeString("es")}</div>
+        <a className="btn-secondary" href={`/mapa/${data.race.id}`}>Mapa</a>
         <button className="btn-secondary" onClick={() => document.documentElement.requestFullscreen?.()}>Pantalla completa</button>
       </header>
       {error && <p className="error" role="alert">Sin conexión: mostrando los últimos datos. {error}</p>}

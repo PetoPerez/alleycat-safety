@@ -1,7 +1,7 @@
 // One jsdom test per I/O-matrix row of spec-web-ui-race-administration.md, with fetch mocked.
 import {afterEach, beforeEach, describe, expect, it, vi} from "vitest";
 import {App} from "./App";
-import {standings} from "./features/races/Board";
+import {duration, standings} from "./features/races/Board";
 import {act} from "react";
 import {formatRelease} from "./features/races/mapUtils";
 import {button, byText, cleanup, click, field, flush, mockApi, render, submit, text, type} from "./test/dom";
@@ -648,6 +648,24 @@ describe("race-day board", () => {
     help: [{id: 9, rider: "Ana", phone: "+5255", kind: "medical", latitude: null, longitude: null, created_at: "2026-11-01T18:45:00Z", resolved_at: null}],
   };
 
+  it("the live map shows riders and open help, and asks to log in without a session", async () => {
+    mockApi({"GET /races/1/checkpoints": {body: [{id: 11, name: "A", latitude: 19.4, longitude: -99.1, code: "x", finish: false}]},
+      "GET /races/1/positions": {body: [{rider_id: 1, name: "Zoe", latitude: 19.41, longitude: -99.11, recorded_at: "2026-11-01T18:20:00Z"}]},
+      "GET /races/1/help": {body: data.help.map(h => ({...h, latitude: 19.42, longitude: -99.12}))}});
+    at("/mapa/1");
+    await render(<App />);
+    expect(text()).toContain("1 corredores con ubicación · 1 auxilios abiertos");
+    expect([".map-dot.rider", ".map-dot.help"].map(q => document.querySelectorAll(q).length)).toEqual([1, 1]);
+    await cleanup();
+    mockApi({"GET /races/1/checkpoints": {status: 401, body: {detail: "Organizer authentication required"}}, "GET /races/1/positions": {body: []}, "GET /races/1/help": {body: []}});
+    await render(<App />);
+    expect(text()).toContain("El mapa es solo para organizadores");
+  });
+
+  it("formats the race timer", () => {
+    expect([duration(5), duration(125), duration(3725), duration(-90)]).toEqual(["00:05", "02:05", "1:02:05", "01:30"]);
+  });
+
   it("ranks by checkpoints reached, then by who reached the last one first", () => {
     expect(standings(data as never).map(r => r.rider.name)).toEqual(["Zoe", "Beto", "Ana"]);
   });
@@ -677,6 +695,17 @@ describe("race-day board", () => {
     mockApi({"GET /races/1/board": {body: {...data, race: {...data.race, winner_rider_id: 3}}}});
     await render(<App />);
     expect(text()).toContain("Ganador: Beto"); // the organizers' call, even though Zoe leads on checkpoints
+    await cleanup();
+    vi.stubGlobal("confirm", () => true);
+    const {calls} = mockApi({"GET /races/1/board": {body: data}, "POST /races/1/release-checkpoints": {body: {}}, "POST /races/1/start": {body: {started_at: new Date(Date.now() - 65_000).toISOString()}}});
+    await render(<App />);
+    expect(document.querySelector(".board-timer")!.textContent).toContain("Salida en"); // data starts in the future
+    await click(button("Liberar checkpoints"));
+    expect(calls.at(-1)).toEqual({key: "POST /races/1/release-checkpoints", body: undefined});
+    expect(text()).not.toContain("Liberar checkpoints");
+    await click(button("Pitazo de salida"));
+    expect(calls.at(-1)).toEqual({key: "POST /races/1/start", body: undefined});
+    expect(document.querySelector(".board-timer")!.textContent).toContain("En carrera 01:05");
     await cleanup();
     mockApi({"GET /races/1/board": {status: 401, body: {detail: "Organizer authentication required"}}});
     await render(<App />);

@@ -31,7 +31,7 @@ from app.routers.live import (CheckInIn, HelpIn, PositionIn, ask_help, board, ch
 from app.services.races import distance_m
 from app.routers.races import (CheckpointIn, RaceIn, RiderIn, add_checkpoint, checkpoints, create_race, create_rider,
                                delete_checkpoint, delete_race, edit_race, get_race, list_riders, publish, release_checkpoints,
-                               WinnerIn, set_winner)
+                               WinnerIn, set_winner, start_race)
 from app.security import token_hash
 from app.services import mailer
 
@@ -835,3 +835,18 @@ def test_roster_import_from_excel_is_all_or_nothing_and_skips_known_riders(db):
         assert upload(admin, race.id, content).status_code == 422
     other = new_admin(db, "import-other@example.test")
     assert upload(other, race.id, sheet).status_code == 404
+
+
+def test_start_whistle_records_the_real_start_once(db, clock):
+    admin = new_admin(db, "whistle@example.test")
+    draft = create_race(race_input("Draft"), admin, db)
+    assert status_of(start_race, draft.id, admin, db).status_code == 422
+    race = published_race(db, admin, "Late")
+    assert board(race.id, admin, db)["race"]["started_at"] is None
+    late = race.starts_at + timedelta(minutes=12)
+    clock(late)
+    assert start_race(race.id, admin, db).started_at == late
+    clock(late + timedelta(minutes=1))
+    assert start_race(race.id, admin, db).started_at == late  # a second press keeps the first whistle
+    assert board(race.id, admin, db)["race"]["started_at"] == late
+    assert board(race.id, admin, db)["race"]["checkpoints_released"] is True  # 12 min after the scheduled start

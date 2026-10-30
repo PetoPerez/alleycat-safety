@@ -8,18 +8,19 @@ import {AdminPanel} from "./features/admin/AdminPanel";
 import {useBusy} from "./useBusy";
 import {HELP_LABEL, RaceDay} from "./features/races/RaceDay";
 import {Board} from "./features/races/Board";
+import {LiveMap} from "./features/races/LiveMap";
 import {formatRelease, formatTime, formatWhen, pinsForDisplay} from "./features/races/mapUtils";
 
 /** token null = malformed link: show the safe invalid state without calling the API. */
-export type Route = {view: "invite" | "consume" | "checkin" | "board"; token: string | null} | {view: "app"};
+export type Route = {view: "invite" | "consume" | "checkin" | "board" | "map"; token: string | null} | {view: "app"};
 
 /** Page loads only: these GETs are SPA routes; the API answers the matching POSTs. */
 export function route(pathname: string): Route {
-  const match = pathname.match(/^\/(invite|auth\/consume|checkin|tablero)\/([^/]+)\/?$/);
+  const match = pathname.match(/^\/(invite|auth\/consume|checkin|tablero|mapa)\/([^/]+)\/?$/);
   if (!match) return {view: "app"};
   let token: string | null = null;
   try { token = decodeURIComponent(match[2]); } catch { /* malformed escape */ }
-  const view = match[1] === "auth/consume" ? "consume" : match[1] === "tablero" ? "board" : match[1] as "invite" | "checkin";
+  const view = match[1] === "auth/consume" ? "consume" : match[1] === "tablero" ? "board" : match[1] === "mapa" ? "map" : match[1] as "invite" | "checkin";
   return {view, token};
 }
 
@@ -27,6 +28,7 @@ export function App() {
   const [current, setCurrent] = useState(() => route(location.pathname));
   const goHome = () => { history.replaceState(null, "", "/"); setCurrent({view: "app"}); };
   if (current.view === "board") return <main className="wide"><Board raceId={current.token} /></main>;
+  if (current.view === "map") return <main className="wide"><LiveMap raceId={current.token} /></main>;
   return (
     <main>
       <header className="brand"><a href="/">Alleycat Safety</a></header>

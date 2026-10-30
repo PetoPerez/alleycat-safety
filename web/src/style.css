@@ -78,6 +78,9 @@ main.wide { max-width: none; }
 .board { display: grid; gap: var(--space-lg); font-size: clamp(1rem, 1.4vw, 1.6rem); }
 .board-head { display: flex; flex-wrap: wrap; gap: var(--space-md); align-items: center; justify-content: space-between; }
 .board-head h1 { font-size: 2em; color: var(--color-primary); }
+.board-timer { display: flex; flex-wrap: wrap; gap: var(--space-md); align-items: center; font-size: 2.2em; font-weight: 700; font-variant-numeric: tabular-nums; }
+.board-timer .muted { font-size: 0.5em; font-weight: 600; }
+.board-timer button { font-size: 0.5em; }
 .board-clock { font-size: 2.2em; font-weight: 700; font-variant-numeric: tabular-nums; }
 .board-help { list-style: none; margin: 0; padding: 0; display: grid; gap: var(--space-sm); }
 .board-help li { background: var(--color-destructive); color: var(--color-on-destructive); padding: var(--space-md); border-radius: 8px; font-size: 1.2em; animation: pulse 1.5s ease-in-out infinite; }
@@ -99,6 +102,10 @@ main.wide { max-width: none; }
 .board-table tr.leader td.board-name { color: var(--color-primary); }
 @keyframes pulse { 50% { opacity: .55; } }
 
+.live-map { height: calc(100vh - 8rem); width: 100%; border-radius: 8px; }
+.map-dot { border-radius: 50%; border: 2px solid #fff; box-shadow: 0 0 4px rgb(0 0 0 / 0.5); }
+.map-dot.rider { background: var(--color-primary); }
+.map-dot.help { background: var(--color-destructive); animation: pulse 1.5s ease-in-out infinite; }
 .checkpoint-map { height: 320px; width: 100%; border-radius: 8px; }
 .leaflet-container { font: inherit; color: #000; }
 

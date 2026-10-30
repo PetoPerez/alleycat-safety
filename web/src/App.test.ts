@@ -7,6 +7,7 @@ describe("route by pathname", () => {
     expect(route("/auth/consume/xyz")).toEqual({view: "consume", token: "xyz"});
     expect(route("/checkin/qr1")).toEqual({view: "checkin", token: "qr1"});
     expect(route("/tablero/7")).toEqual({view: "board", token: "7"});
+    expect(route("/mapa/7")).toEqual({view: "map", token: "7"});
     expect(route("/")).toEqual({view: "app"});
     expect(route("/invite/")).toEqual({view: "app"});
     expect(route("/races")).toEqual({view: "app"});
