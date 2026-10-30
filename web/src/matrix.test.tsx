@@ -4,7 +4,7 @@ import {App} from "./App";
 import {standings} from "./features/races/Board";
 import {act} from "react";
 import {formatRelease} from "./features/races/mapUtils";
-import {button, cleanup, click, field, flush, mockApi, render, submit, text, type} from "./test/dom";
+import {button, byText, cleanup, click, field, flush, mockApi, render, submit, text, type} from "./test/dom";
 
 const race = (id: number, name: string, status = "draft") => ({
   id, name, status, start_label: `Salida ${name}`, latitude: 19.43, longitude: -99.13,
@@ -275,6 +275,7 @@ describe("matrix", () => {
       await act(async () => input.dispatchEvent(new Event("change", {bubbles: true})));
       await flush();
     };
+    expect(byText("a", "Descargar plantilla")!.getAttribute("href")).toBe("/plantilla-padron.xlsx");
     const file = new File(["xlsx"], "padron.xlsx");
     await pick(file);
     expect(api.calls.find(c => c.key === "POST /races/1/riders/import")!.body).toBe(file);

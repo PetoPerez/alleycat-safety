@@ -164,6 +164,7 @@ export function InvitationPanel({raceId, published}: {raceId: number; published:
         <summary>Cargar padrón desde Excel</summary>
         <div className="stack">
           <p className="muted">Archivo .xlsx con una fila de encabezados: <strong>Nombre</strong> y <strong>Email</strong> y/o <strong>Teléfono</strong>, en cualquier orden. Se lee la primera hoja. Si subes el archivo otra vez, no se duplica a nadie.</p>
+          <a className="btn-secondary" href="/plantilla-padron.xlsx" download>Descargar plantilla de Excel</a>
           <label>Archivo de Excel
             <input type="file" accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" disabled={busy}
               onChange={e => { importSheet(e.target.files?.[0]); e.target.value = ""; }} />
